@@ -22,7 +22,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"k8s.io/utils/exec"
 
@@ -129,13 +128,7 @@ func (ne *Nsenter) SupportsSystemd() (string, bool) {
 // EvalSymlinks returns the path name on the host after evaluating symlinks on the
 // host.
 func (ne *Nsenter) EvalSymlinks(pathname string) (string, error) {
-	args := []string{"-m", pathname}
-	outBytes, err := ne.Exec("realpath", args).CombinedOutput()
-	if err != nil {
-		glog.Infof("failed to resolve symbolic links on %s: %v", pathname, err)
-		return "", err
-	}
-	return strings.TrimSpace(string(outBytes)), nil
+	return EvalSymlinksAtNewRoot(pathname, "/", hostRootFsPath)
 }
 
 // KubeletPath returns the path name that can be accessed by containerized
