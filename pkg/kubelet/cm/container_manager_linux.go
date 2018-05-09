@@ -131,7 +131,8 @@ type containerManagerImpl struct {
 	// Interface for exporting and allocating devices reported by device plugins.
 	deviceManager devicemanager.Manager
 	// Interface for CPU affinity management.
-	cpuManager cpumanager.Manager
+	cpuManager               cpumanager.Manager
+	cpuOvercommitRatioGetter func() float64
 }
 
 type features struct {
@@ -262,6 +263,10 @@ func NewContainerManager(mountUtil mount.Interface, cadvisorInterface cadvisor.I
 		cgroupRoot:          cgroupRoot,
 		recorder:            recorder,
 		qosContainerManager: qosContainerManager,
+		// Default CPU Overcommit Ratio is 1.0.
+		cpuOvercommitRatioGetter: func() float64 {
+			return 1.0
+		},
 	}
 
 	glog.Infof("Creating device plugin manager: %t", devicePluginEnabled)
@@ -298,11 +303,12 @@ func NewContainerManager(mountUtil mount.Interface, cadvisorInterface cadvisor.I
 func (cm *containerManagerImpl) NewPodContainerManager() PodContainerManager {
 	if cm.NodeConfig.CgroupsPerQOS {
 		return &podContainerManagerImpl{
-			qosContainersInfo: cm.GetQOSContainersInfo(),
-			subsystems:        cm.subsystems,
-			cgroupManager:     cm.cgroupManager,
-			podPidsLimit:      cm.ExperimentalPodPidsLimit,
-			enforceCPULimits:  cm.EnforceCPULimits,
+			qosContainersInfo:        cm.GetQOSContainersInfo(),
+			subsystems:               cm.subsystems,
+			cgroupManager:            cm.cgroupManager,
+			podPidsLimit:             cm.ExperimentalPodPidsLimit,
+			enforceCPULimits:         cm.EnforceCPULimits,
+			cpuOvercommitRatioGetter: cm.cpuOvercommitRatioGetter,
 		}
 	}
 	return &podContainerManagerNoop{
@@ -377,7 +383,7 @@ func setupKernelTunables(option KernelTunableBehavior) error {
 	return utilerrors.NewAggregate(errList)
 }
 
-func (cm *containerManagerImpl) setupNode(activePods ActivePodsFunc) error {
+func (cm *containerManagerImpl) setupNode(activePods ActivePodsFunc, cpuOvercommitRatioGetter func() float64) error {
 	f, err := validateSystemRequirements(cm.mountUtil)
 	if err != nil {
 		return err
@@ -398,7 +404,7 @@ func (cm *containerManagerImpl) setupNode(activePods ActivePodsFunc) error {
 		if err := cm.createNodeAllocatableCgroups(); err != nil {
 			return err
 		}
-		err = cm.qosContainerManager.Start(cm.getNodeAllocatableAbsolute, activePods)
+		err = cm.qosContainerManager.Start(cm.getNodeAllocatableAbsolute, activePods, cpuOvercommitRatioGetter)
 		if err != nil {
 			return fmt.Errorf("failed to initialize top level QOS containers: %v", err)
 		}
@@ -516,7 +522,7 @@ func (cm *containerManagerImpl) GetQOSContainersInfo() QOSContainersInfo {
 }
 
 func (cm *containerManagerImpl) UpdateQOSCgroups() error {
-	return cm.qosContainerManager.UpdateCgroups()
+	return cm.qosContainerManager.UpdateCgroups(cm.cpuOvercommitRatioGetter)
 }
 
 func (cm *containerManagerImpl) Status() Status {
@@ -525,11 +531,14 @@ func (cm *containerManagerImpl) Status() Status {
 	return cm.status
 }
 
-func (cm *containerManagerImpl) Start(node *v1.Node,
+func (cm *containerManagerImpl) Start(nodeInfo *v1.Node,
+	cpuOvercommitRatioGetter func() float64,
 	activePods ActivePodsFunc,
 	sourcesReady config.SourcesReady,
 	podStatusProvider status.PodStatusProvider,
 	runtimeService internalapi.RuntimeService) error {
+
+	cm.cpuOvercommitRatioGetter = cpuOvercommitRatioGetter
 
 	// Initialize CPU manager
 	if utilfeature.DefaultFeatureGate.Enabled(kubefeatures.CPUManager) {
@@ -538,7 +547,7 @@ func (cm *containerManagerImpl) Start(node *v1.Node,
 
 	// cache the node Info including resource capacity and
 	// allocatable of the node
-	cm.nodeInfo = node
+	cm.nodeInfo = nodeInfo
 
 	rootfs, err := cm.cadvisorInterface.RootFsInfo()
 	if err != nil {
@@ -554,7 +563,7 @@ func (cm *containerManagerImpl) Start(node *v1.Node,
 	}
 
 	// Setup the node
-	if err := cm.setupNode(activePods); err != nil {
+	if err := cm.setupNode(activePods, cpuOvercommitRatioGetter); err != nil {
 		return err
 	}
 

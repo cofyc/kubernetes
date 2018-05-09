@@ -103,7 +103,7 @@ func HugePageLimits(resourceList v1.ResourceList) map[int64]int64 {
 }
 
 // ResourceConfigForPod takes the input pod and outputs the cgroup resource config.
-func ResourceConfigForPod(pod *v1.Pod, enforceCPULimits bool) *ResourceConfig {
+func ResourceConfigForPod(pod *v1.Pod, enforceCPULimits bool, cpuOvercommitRatio float64) *ResourceConfig {
 	// sum requests and limits.
 	reqs, limits := resource.PodRequestsAndLimits(pod)
 
@@ -122,6 +122,7 @@ func ResourceConfigForPod(pod *v1.Pod, enforceCPULimits bool) *ResourceConfig {
 
 	// convert to CFS values
 	cpuShares := MilliCPUToShares(cpuRequests)
+	cpuShares = uint64(float64(cpuShares) / cpuOvercommitRatio)
 	cpuQuota, cpuPeriod := MilliCPUToQuota(cpuLimits)
 
 	// track if limits were applied for each resource.
