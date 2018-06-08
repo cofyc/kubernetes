@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"reflect"
 	"sync"
+	"time"
 
 	"github.com/golang/glog"
 	"k8s.io/api/core/v1"
@@ -33,6 +34,7 @@ import (
 	kubetypes "k8s.io/kubernetes/pkg/kubelet/types"
 	"k8s.io/kubernetes/pkg/kubelet/util/format"
 	"k8s.io/kubernetes/pkg/util/config"
+	"k8s.io/kubernetes/pkg/volume/util"
 )
 
 // PodConfigNotificationMode describes how changes are sent to the update channel.
@@ -180,15 +182,33 @@ func (s *podStorage) Merge(source string, change interface{}) error {
 	switch s.mode {
 	case PodConfigNotificationIncremental:
 		if len(removes.Pods) > 0 {
+			for _, pod := range removes.Pods {
+				if util.IsTerminatingAndContainersNotRunning(pod, pod.Status) {
+					glog.Infof("cofyc-debug: remove pod %q is terminating and not running from apiserver, add delay to increase possibility that dswp will use stale status to mount volumes again", pod.Name)
+					time.Sleep(time.Second * 30)
+				}
+			}
 			s.updates <- *removes
 		}
 		if len(adds.Pods) > 0 {
 			s.updates <- *adds
 		}
 		if len(updates.Pods) > 0 {
+			for _, pod := range updates.Pods {
+				if util.IsTerminatingAndContainersNotRunning(pod, pod.Status) {
+					glog.Infof("cofyc-debug: update pod %q is terminating and not running from apiserver, add delay to increase possibility that dswp will use stale status to mount volumes again", pod.Name)
+					time.Sleep(time.Second * 30)
+				}
+			}
 			s.updates <- *updates
 		}
 		if len(deletes.Pods) > 0 {
+			for _, pod := range deletes.Pods {
+				if util.IsTerminatingAndContainersNotRunning(pod, pod.Status) {
+					glog.Infof("cofyc-debug: delete pod %q is terminating and not running from apiserver, add delay to increase possibility that dswp will use stale status to mount volumes again", pod.Name)
+					time.Sleep(time.Second * 30)
+				}
+			}
 			s.updates <- *deletes
 		}
 		if len(restores.Pods) > 0 {
@@ -202,6 +222,12 @@ func (s *podStorage) Merge(source string, change interface{}) error {
 		}
 		// Only add reconcile support here, because kubelet doesn't support Snapshot update now.
 		if len(reconciles.Pods) > 0 {
+			for _, pod := range reconciles.Pods {
+				if util.IsTerminatingAndContainersNotRunning(pod, pod.Status) {
+					glog.Infof("cofyc-debug: reconcile pod %q is terminating and not running from apiserver, add delay to increase possibility that dswp will use stale status to mount volumes again", pod.Name)
+					time.Sleep(time.Second * 30)
+				}
+			}
 			s.updates <- *reconciles
 		}
 

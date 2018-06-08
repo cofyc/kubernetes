@@ -921,6 +921,8 @@ func (kl *Kubelet) PodResourcesAreReclaimed(pod *v1.Pod, status v1.PodStatus) bo
 		if pcm.Exists(pod) {
 			glog.V(3).Infof("Pod %q is terminated, but pod cgroup sandbox has not been cleaned up", format.Pod(pod))
 			return false
+		} else {
+			glog.V(3).Infof("Pod %q is terminated, and pod cgroup sandbox has been cleaned up", format.Pod(pod))
 		}
 	}
 	return true
@@ -1552,6 +1554,15 @@ func (kl *Kubelet) convertToAPIContainerStatuses(pod *v1.Pod, podStatus *kubecon
 		kubetypes.SortInitContainerStatuses(pod, containerStatuses)
 	} else {
 		sort.Sort(kubetypes.SortedContainerStatuses(containerStatuses))
+	}
+	tmpPodStatus := v1.PodStatus{
+		ContainerStatuses: containerStatuses,
+	}
+	if volumeutil.IsTerminatingAndContainersNotRunning(pod, tmpPodStatus) {
+		glog.Infof("cofyc-debug: Generated status for terminating and containers not running pod: %q", pod.Name)
+	}
+	if volumeutil.IsTerminatingAndContainersAreRunning(pod, tmpPodStatus) {
+		glog.Infof("cofyc-debug: Generated status for terminating and containers are running pod: %q", pod.Name)
 	}
 	return containerStatuses
 }

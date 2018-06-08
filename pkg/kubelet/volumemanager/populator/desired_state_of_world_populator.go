@@ -187,6 +187,15 @@ func (dswp *desiredStateOfWorldPopulator) findAndAddNewPods() {
 			// Do not (re)add volumes for terminated pods
 			continue
 		}
+		if util.IsTerminatingAndContainersAreRunning(pod, pod.Status) {
+			_, found := dswp.podStatusProvider.GetPodStatus(pod.UID)
+			if !found {
+				uniquePodName := util.GetUniquePodName(pod)
+				if !dswp.podPreviouslyProcessed(uniquePodName) {
+					glog.Infof("cofyc-debug: pod %q is terminating and containers running, and pod status is missing from statusMananger, will be re-added", pod.Name)
+				}
+			}
+		}
 		dswp.processPodVolumes(pod)
 	}
 }
@@ -202,11 +211,24 @@ func (dswp *desiredStateOfWorldPopulator) findAndRemoveDeletedPods() {
 		if podExists {
 			// Skip running pods
 			if !dswp.isPodTerminated(pod) {
+				// if util.IsTerminatingAndContainersAreRunning(pod, pod.Status) {
+				// glog.Infof("cofyc-debug: Skip terminating and containers are running pod: %q", pod.Name)
+				// } else {
+				// if pod.DeletionTimestamp != nil {
+				// glog.Infof("cofyc-debug: Skip terminating and running pod: %q, status: %+v", pod.Name, pod.Status)
+				// } else {
+				// glog.Infof("cofyc-debug: Skip not-terminating pod: %q, status: %+v", pod.Name, pod.Status)
+				// }
+				// }
 				continue
 			}
 			if dswp.keepTerminatedPodVolumes {
 				continue
 			}
+			podStatus, _ := dswp.podStatusProvider.GetPodStatus(pod.UID)
+			glog.Infof("cofyc-debug: Removing volume for termianted pod: %q, containers not running: %v, pod.Status: %+v, status from statusMananger: %+v", pod.Name, util.IsContainersNotRunning(podStatus.ContainerStatuses), pod.Status, podStatus)
+		} else {
+			glog.Infof("cofyc-debug: Removing volume for does-not-exist pod: %q", volumeToMount.PodName)
 		}
 
 		// Once a pod has been deleted from kubelet pod manager, do not delete

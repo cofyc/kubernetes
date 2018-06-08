@@ -66,6 +66,27 @@ const (
 	NamespaceDefault = metav1.NamespaceDefault
 )
 
+func (op PodOperation) String() string {
+	switch op {
+	case SET:
+		return "SET"
+	case ADD:
+		return "ADD"
+	case DELETE:
+		return "DELETE"
+	case REMOVE:
+		return "REMOVE"
+	case UPDATE:
+		return "UPDATE"
+	case RECONCILE:
+		return "RECONCILE"
+	case RESTORE:
+		return "RESTORE"
+	default:
+		return "UNKNOWN"
+	}
+}
+
 // PodUpdate defines an operation sent on the channel. You can add or remove single services by
 // sending an array of size one and Op == ADD|REMOVE (with REMOVE, only the ID is required).
 // For setting the state of the system to a given state for this source configuration, set

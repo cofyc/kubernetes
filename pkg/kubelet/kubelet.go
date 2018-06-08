@@ -105,6 +105,7 @@ import (
 	nodeutil "k8s.io/kubernetes/pkg/util/node"
 	"k8s.io/kubernetes/pkg/util/oom"
 	"k8s.io/kubernetes/pkg/volume"
+	"k8s.io/kubernetes/pkg/volume/util"
 	utilexec "k8s.io/utils/exec"
 )
 
@@ -1794,6 +1795,14 @@ func (kl *Kubelet) syncLoopIteration(configCh <-chan kubetypes.PodUpdate, handle
 			glog.Errorf("Update channel is closed. Exiting the sync loop.")
 			return false
 		}
+		for _, pod := range u.Pods {
+			if util.IsTerminatingAndContainersNotRunning(pod, pod.Status) {
+				glog.Infof("cofyc-debug: SyncLoop (%q, %q) for terminating and containers not running: %q", u.Op, u.Source, pod.Name)
+			}
+			if util.IsTerminatingAndContainersAreRunning(pod, pod.Status) {
+				glog.Infof("cofyc-debug: SyncLoop (%q, %q) for terminating and containers are running: %q", u.Op, u.Source, pod.Name)
+			}
+		}
 
 		switch u.Op {
 		case kubetypes.ADD:
@@ -1976,6 +1985,12 @@ func (kl *Kubelet) HandlePodAdditions(pods []*v1.Pod) {
 func (kl *Kubelet) HandlePodUpdates(pods []*v1.Pod) {
 	start := kl.clock.Now()
 	for _, pod := range pods {
+		if util.IsTerminatingAndContainersNotRunning(pod, pod.Status) {
+			glog.Infof("cofyc-debug: UPDATING terminating and containers not running pod: %q", pod.Name)
+		}
+		if util.IsTerminatingAndContainersAreRunning(pod, pod.Status) {
+			glog.Infof("cofyc-debug: UPDATING terminating and containers are running pod: %q", pod.Name)
+		}
 		kl.podManager.UpdatePod(pod)
 		if kubepod.IsMirrorPod(pod) {
 			kl.handleMirrorPod(pod, start)
@@ -1993,6 +2008,12 @@ func (kl *Kubelet) HandlePodUpdates(pods []*v1.Pod) {
 func (kl *Kubelet) HandlePodRemoves(pods []*v1.Pod) {
 	start := kl.clock.Now()
 	for _, pod := range pods {
+		if util.IsTerminatingAndContainersNotRunning(pod, pod.Status) {
+			glog.Infof("cofyc-debug: REMOVEING terminating and containers not running pod: %q", pod.Name)
+		}
+		if util.IsTerminatingAndContainersAreRunning(pod, pod.Status) {
+			glog.Infof("cofyc-debug: REMOVING terminating and containers are running pod: %q", pod.Name)
+		}
 		kl.podManager.DeletePod(pod)
 		if kubepod.IsMirrorPod(pod) {
 			kl.handleMirrorPod(pod, start)
@@ -2011,6 +2032,12 @@ func (kl *Kubelet) HandlePodRemoves(pods []*v1.Pod) {
 // that should be reconciled.
 func (kl *Kubelet) HandlePodReconcile(pods []*v1.Pod) {
 	for _, pod := range pods {
+		if util.IsTerminatingAndContainersNotRunning(pod, pod.Status) {
+			glog.Infof("cofyc-debug: RECONCILING terminating and containers not running pod: %q", pod.Name)
+		}
+		if util.IsTerminatingAndContainersAreRunning(pod, pod.Status) {
+			glog.Infof("cofyc-debug: RECONCILING terminating and containers are running pod: %q", pod.Name)
+		}
 		// Update the pod in pod manager, status manager will do periodically reconcile according
 		// to the pod manager.
 		kl.podManager.UpdatePod(pod)

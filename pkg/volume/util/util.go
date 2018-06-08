@@ -648,6 +648,11 @@ func IsPodTerminated(pod *v1.Pod, podStatus v1.PodStatus) bool {
 	return podStatus.Phase == v1.PodFailed || podStatus.Phase == v1.PodSucceeded || (pod.DeletionTimestamp != nil && notRunning(podStatus.ContainerStatuses))
 }
 
+// IsTerminating returns true if pod's DeletionTimestamp has been set.
+func IsTerminating(pod *v1.Pod) bool {
+	return pod.DeletionTimestamp != nil
+}
+
 // notRunning returns true if every status is terminated or waiting, or the status list
 // is empty.
 func notRunning(statuses []v1.ContainerStatus) bool {
@@ -657,6 +662,18 @@ func notRunning(statuses []v1.ContainerStatus) bool {
 		}
 	}
 	return true
+}
+
+func IsContainersNotRunning(statuses []v1.ContainerStatus) bool {
+	return notRunning(statuses)
+}
+
+func IsTerminatingAndContainersNotRunning(pod *v1.Pod, podStatus v1.PodStatus) bool {
+	return pod.DeletionTimestamp != nil && notRunning(podStatus.ContainerStatuses)
+}
+
+func IsTerminatingAndContainersAreRunning(pod *v1.Pod, podStatus v1.PodStatus) bool {
+	return pod.DeletionTimestamp != nil && !notRunning(podStatus.ContainerStatuses)
 }
 
 // SplitUniqueName splits the unique name to plugin name and volume name strings. It expects the uniqueName to follow

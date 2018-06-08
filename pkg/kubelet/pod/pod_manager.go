@@ -29,6 +29,7 @@ import (
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/kubelet/secret"
 	kubetypes "k8s.io/kubernetes/pkg/kubelet/types"
+	"k8s.io/kubernetes/pkg/volume/util"
 )
 
 // Manager stores and manages access to pods, maintaining the mappings
@@ -173,6 +174,12 @@ func (pm *basicManager) UpdatePod(pod *v1.Pod) {
 // lock.
 func (pm *basicManager) updatePodsInternal(pods ...*v1.Pod) {
 	for _, pod := range pods {
+		if util.IsTerminatingAndContainersNotRunning(pod, pod.Status) {
+			glog.Infof("cofyc-debug: podManager update terminating and containers not running pod: %q", pod.Name)
+		}
+		if util.IsTerminatingAndContainersAreRunning(pod, pod.Status) {
+			glog.Infof("cofyc-debug: podManager update terminating and containers are running pod: %q", pod.Name)
+		}
 		if pm.secretManager != nil {
 			// TODO: Consider detecting only status update and in such case do
 			// not register pod, as it doesn't really matter.
@@ -207,6 +214,10 @@ func (pm *basicManager) updatePodsInternal(pods ...*v1.Pod) {
 func (pm *basicManager) DeletePod(pod *v1.Pod) {
 	pm.lock.Lock()
 	defer pm.lock.Unlock()
+	glog.Infof("cofyc-debug: pod %q is going to be deleted from podMananger", pod.Name)
+	defer func() {
+		glog.Infof("cofyc-debug: pod %q is deleted from podMananger", pod.Name)
+	}()
 	if pm.secretManager != nil {
 		pm.secretManager.UnregisterPod(pod)
 	}

@@ -37,6 +37,7 @@ import (
 	kubepod "k8s.io/kubernetes/pkg/kubelet/pod"
 	kubetypes "k8s.io/kubernetes/pkg/kubelet/types"
 	"k8s.io/kubernetes/pkg/kubelet/util/format"
+	"k8s.io/kubernetes/pkg/volume/util"
 )
 
 // A wrapper around v1.PodStatus that includes a version to enforce that stale pod statuses are
@@ -480,6 +481,12 @@ func (m *manager) syncPod(uid types.UID, status versionedPodStatus) {
 
 	glog.V(3).Infof("Status for pod %q updated successfully: (%d, %+v)", format.Pod(pod), status.version, status.status)
 	m.apiStatusVersions[kubetypes.MirrorPodUID(pod.UID)] = status.version
+	if util.IsTerminatingAndContainersNotRunning(pod, status.status) {
+		glog.Infof("cofyc-debug: updated status for terminating and containers not running pod: %q, status: %v", pod.Name, status.status)
+	}
+	if util.IsTerminatingAndContainersAreRunning(pod, status.status) {
+		glog.Infof("cofyc-debug: updated status for terminating and containers are running pod: %q, status: %v", pod.Name, status.status)
+	}
 
 	// We don't handle graceful deletion of mirror pods.
 	if m.canBeDeleted(pod, status.status) {
@@ -492,7 +499,6 @@ func (m *manager) syncPod(uid types.UID, status versionedPodStatus) {
 			return
 		}
 		glog.V(3).Infof("Pod %q fully terminated and removed from etcd", format.Pod(pod))
-		m.deletePodStatus(uid)
 	}
 }
 
