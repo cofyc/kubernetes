@@ -304,7 +304,7 @@ func (ctrl *PersistentVolumeController) shouldDelayBinding(claim *v1.PersistentV
 
 	class, err := ctrl.classLister.Get(className)
 	if err != nil {
-		return false, nil
+		return false, err
 	}
 
 	if class.VolumeBindingMode == nil {
