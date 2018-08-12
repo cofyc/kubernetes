@@ -63,12 +63,16 @@ func NewCache() *Cache {
 type NodeCache struct {
 	mu    sync.RWMutex
 	cache predicateMap
+	// Flags which indicate if we received invalidation requests for each
+	// predicate during check was in flight.
+	receivedInvalidationRequests map[string]bool
 }
 
 // newNodeCache returns an empty NodeCache.
 func newNodeCache() *NodeCache {
 	return &NodeCache{
 		cache: make(predicateMap),
+		receivedInvalidationRequests: make(map[string]bool),
 	}
 }
 
@@ -249,6 +253,11 @@ func (n *NodeCache) updateResult(
 
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	if received, ok := n.receivedInvalidationRequests[predicateKey]; ok && received {
+		// Ignore if we received a invalidation request for this predicate
+		// in flight.
+		return
+	}
 	// If cached predicate map already exists, just update the predicate by key
 	if predicates, ok := n.cache[predicateKey]; ok {
 		// maps in golang are references, no need to add them back
@@ -278,6 +287,7 @@ func (n *NodeCache) lookupResult(
 	} else {
 		metrics.EquivalenceCacheMisses.Inc()
 	}
+	delete(n.receivedInvalidationRequests, predicateKey)
 	return value, ok
 }
 
@@ -287,6 +297,7 @@ func (n *NodeCache) invalidatePreds(predicateKeys sets.String) {
 	defer n.mu.Unlock()
 	for predicateKey := range predicateKeys {
 		delete(n.cache, predicateKey)
+		n.receivedInvalidationRequests[predicateKey] = true
 	}
 }
 

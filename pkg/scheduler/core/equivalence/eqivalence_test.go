@@ -19,6 +19,7 @@ package equivalence
 import (
 	"errors"
 	"reflect"
+	"sync"
 	"testing"
 
 	"k8s.io/api/core/v1"
@@ -654,6 +655,86 @@ func TestGetEquivalenceHash(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestInvalidateCachedPredicateInflight(t *testing.T) {
+	testPredicate := "GeneralPredicates"
+	podName := "testPod"
+	nodeName := "node1"
+	equivalenceHashForUpdatePredicate := uint64(123)
+	cachedItem := predicateItemType{
+		fit: false,
+		reasons: []algorithm.PredicateFailureReason{
+			predicates.ErrPodNotFitsHostPorts,
+		},
+	}
+	cache := &upToDateCache{}
+	node := schedulercache.NewNodeInfo()
+	testNode := &v1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}}
+	node.SetNode(testNode)
+	ecache := NewCache()
+	nodeCache, _ := ecache.GetNodeCache(testNode.Name)
+
+	// update cache
+	nodeCache.updateResult(
+		podName,
+		testPredicate,
+		cachedItem.fit,
+		cachedItem.reasons,
+		equivalenceHashForUpdatePredicate,
+		cache,
+		node,
+	)
+	// cache should exist
+	_, ok := nodeCache.lookupResult(podName, nodeName, testPredicate, equivalenceHashForUpdatePredicate)
+	if !ok {
+		t.Errorf("Failed: cached item for predicate key: %v on node: %v should exist",
+			testPredicate, nodeName)
+	}
+
+	var wg sync.WaitGroup
+
+	cachedInvalidatedCh := make(chan struct{})
+	beforeUpdatingCacheCh := make(chan struct{})
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		result := predicateResult{
+			Fit:         cachedItem.fit,
+			FailReasons: cachedItem.reasons,
+		}
+		close(beforeUpdatingCacheCh)
+		// objects are updated and cache is invalidated
+		<-cachedInvalidatedCh
+		nodeCache.updateResult(
+			podName,
+			testPredicate,
+			result.Fit,
+			result.FailReasons,
+			equivalenceHashForUpdatePredicate,
+			cache,
+			node,
+		)
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-beforeUpdatingCacheCh
+		// objects are updated during predicate check was running
+		cachedItem.fit = true
+		// invalidate cache
+		ecache.InvalidatePredicates(sets.NewString(testPredicate))
+		close(cachedInvalidatedCh)
+	}()
+
+	wg.Wait()
+	_, ok = nodeCache.lookupResult(podName, nodeName, testPredicate, equivalenceHashForUpdatePredicate)
+	if ok {
+		t.Errorf("Failed: cached item for predicate key: %v on node: %v should be invalidated",
+			testPredicate, nodeName)
 	}
 }
 
