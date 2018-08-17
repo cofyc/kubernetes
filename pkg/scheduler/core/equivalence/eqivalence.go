@@ -63,16 +63,16 @@ func NewCache() *Cache {
 type NodeCache struct {
 	mu    sync.RWMutex
 	cache predicateMap
-	// Flags which indicate if we received invalidation requests for each
-	// predicate during check was in flight.
-	receivedInvalidationRequests map[string]bool
+	// Generations for predicates, incremented on predicate invalidation.
+	// Created on first update. Use 0 if does not exist.
+	generations map[string]uint64
 }
 
 // newNodeCache returns an empty NodeCache.
 func newNodeCache() *NodeCache {
 	return &NodeCache{
-		cache: make(predicateMap),
-		receivedInvalidationRequests: make(map[string]bool),
+		cache:       make(predicateMap),
+		generations: make(map[string]uint64),
 	}
 }
 
@@ -197,7 +197,7 @@ type predicateResult struct {
 // RunPredicate returns a cached predicate result. In case of a cache miss, the predicate will be
 // run and its results cached for the next call.
 //
-// NOTE: RunPredicate will not update the equivalence cache if the given NodeInfo is stale.
+// NOTE: RunPredicate will not update the equivalence cache if generation does not match live version.
 func (n *NodeCache) RunPredicate(
 	pred algorithm.FitPredicate,
 	predicateKey string,
@@ -212,7 +212,7 @@ func (n *NodeCache) RunPredicate(
 		return false, []algorithm.PredicateFailureReason{}, fmt.Errorf("nodeInfo is nil or node is invalid")
 	}
 
-	result, ok := n.lookupResult(pod.GetName(), nodeInfo.Node().GetName(), predicateKey, equivClass.hash)
+	result, generation, ok := n.lookupResult(pod.GetName(), nodeInfo.Node().GetName(), predicateKey, equivClass.hash)
 	if ok {
 		return result.Fit, result.FailReasons, nil
 	}
@@ -221,7 +221,7 @@ func (n *NodeCache) RunPredicate(
 		return fit, reasons, err
 	}
 	if cache != nil {
-		n.updateResult(pod.GetName(), predicateKey, fit, reasons, equivClass.hash, cache, nodeInfo)
+		n.updateResult(pod.GetName(), predicateKey, fit, reasons, generation, equivClass.hash, cache, nodeInfo)
 	}
 	return fit, reasons, nil
 }
@@ -231,6 +231,7 @@ func (n *NodeCache) updateResult(
 	podName, predicateKey string,
 	fit bool,
 	reasons []algorithm.PredicateFailureReason,
+	generation uint64,
 	equivalenceHash uint64,
 	cache schedulercache.Cache,
 	nodeInfo *schedulercache.NodeInfo,
@@ -238,11 +239,6 @@ func (n *NodeCache) updateResult(
 	if nodeInfo == nil || nodeInfo.Node() == nil {
 		// This may happen during tests.
 		metrics.EquivalenceCacheWrites.WithLabelValues("discarded_bad_node").Inc()
-		return
-	}
-	// Skip update if NodeInfo is stale.
-	if !cache.IsUpToDate(nodeInfo) {
-		metrics.EquivalenceCacheWrites.WithLabelValues("discarded_stale").Inc()
 		return
 	}
 
@@ -253,9 +249,14 @@ func (n *NodeCache) updateResult(
 
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	if received, ok := n.receivedInvalidationRequests[predicateKey]; ok && received {
-		// Ignore if we received a invalidation request for this predicate
-		// in flight.
+	liveGeneration, ok := n.generations[predicateKey]
+	if !ok {
+		liveGeneration = 0
+	}
+	if generation != liveGeneration {
+		// Generation of this predicate has been updated since we last looked
+		// up, this indicates that we received a invalidation request during
+		// this time. Cache may be stale, skip update.
 		return
 	}
 	// If cached predicate map already exists, just update the predicate by key
@@ -273,12 +274,12 @@ func (n *NodeCache) updateResult(
 		nodeInfo.Node().Name, predicateKey, podName, predicateItem)
 }
 
-// lookupResult returns cached predicate results and a bool saying whether a
-// cache entry was found.
+// lookupResult returns cached predicate results with a associated generation
+// and a bool saying whether a cache entry was found.
 func (n *NodeCache) lookupResult(
 	podName, nodeName, predicateKey string,
 	equivalenceHash uint64,
-) (value predicateResult, ok bool) {
+) (value predicateResult, generation uint64, ok bool) {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	value, ok = n.cache[predicateKey][equivalenceHash]
@@ -287,8 +288,12 @@ func (n *NodeCache) lookupResult(
 	} else {
 		metrics.EquivalenceCacheMisses.Inc()
 	}
-	delete(n.receivedInvalidationRequests, predicateKey)
-	return value, ok
+	if val, ok := n.generations[predicateKey]; ok {
+		generation = val
+	} else {
+		generation = uint64(0)
+	}
+	return value, generation, ok
 }
 
 // invalidatePreds deletes cached predicates by given keys.
@@ -297,7 +302,11 @@ func (n *NodeCache) invalidatePreds(predicateKeys sets.String) {
 	defer n.mu.Unlock()
 	for predicateKey := range predicateKeys {
 		delete(n.cache, predicateKey)
-		n.receivedInvalidationRequests[predicateKey] = true
+		if _, ok := n.generations[predicateKey]; ok {
+			n.generations[predicateKey]++
+		} else {
+			n.generations[predicateKey] = 1
+		}
 	}
 }
 
