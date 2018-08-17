@@ -35,7 +35,6 @@ go_test(
         "//pkg/kubeapiserver/admission:go_default_library",
         "//pkg/scheduler:go_default_library",
         "//pkg/scheduler/algorithm:go_default_library",
-        "//pkg/scheduler/algorithm/predicates:go_default_library",
         "//pkg/scheduler/algorithmprovider:go_default_library",
         "//pkg/scheduler/api:go_default_library",
         "//pkg/scheduler/cache:go_default_library",
