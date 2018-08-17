@@ -721,9 +721,6 @@ func (c *configFactory) updatePodInCache(oldObj, newObj interface{}) {
 		return
 	}
 
-	// NOTE: Because the scheduler uses snapshots of schedulerCache and the live
-	// version of equivalencePodCache, updates must be written to schedulerCache
-	// before invalidating equivalencePodCache.
 	if err := c.schedulerCache.UpdatePod(oldPod, newPod); err != nil {
 		glog.Errorf("scheduler cache UpdatePod failed: %v", err)
 	}
@@ -810,9 +807,6 @@ func (c *configFactory) deletePodFromCache(obj interface{}) {
 		glog.Errorf("cannot convert to *v1.Pod: %v", t)
 		return
 	}
-	// NOTE: Because the scheduler uses snapshots of schedulerCache and the live
-	// version of equivalencePodCache, updates must be written to schedulerCache
-	// before invalidating equivalencePodCache.
 	if err := c.schedulerCache.RemovePod(pod); err != nil {
 		glog.Errorf("scheduler cache RemovePod failed: %v", err)
 	}
@@ -874,9 +868,6 @@ func (c *configFactory) updateNodeInCache(oldObj, newObj interface{}) {
 		return
 	}
 
-	// NOTE: Because the scheduler uses snapshots of schedulerCache and the live
-	// version of equivalencePodCache, updates must be written to schedulerCache
-	// before invalidating equivalencePodCache.
 	if err := c.schedulerCache.UpdateNode(oldNode, newNode); err != nil {
 		glog.Errorf("scheduler cache UpdateNode failed: %v", err)
 	}
@@ -970,9 +961,6 @@ func (c *configFactory) deleteNodeFromCache(obj interface{}) {
 		glog.Errorf("cannot convert to *v1.Node: %v", t)
 		return
 	}
-	// NOTE: Because the scheduler uses snapshots of schedulerCache and the live
-	// version of equivalencePodCache, updates must be written to schedulerCache
-	// before invalidating equivalencePodCache.
 	if err := c.schedulerCache.RemoveNode(node); err != nil {
 		glog.Errorf("scheduler cache RemoveNode failed: %v", err)
 	}
@@ -1402,9 +1390,6 @@ func (c *configFactory) MakeDefaultErrorFunc(backoff *util.PodBackoff, podQueue 
 					_, err := c.client.CoreV1().Nodes().Get(nodeName, metav1.GetOptions{})
 					if err != nil && errors.IsNotFound(err) {
 						node := v1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}}
-						// NOTE: Because the scheduler uses snapshots of schedulerCache and the live
-						// version of equivalencePodCache, updates must be written to schedulerCache
-						// before invalidating equivalencePodCache.
 						c.schedulerCache.RemoveNode(&node)
 						// invalidate cached predicate for the node
 						if c.enableEquivalenceClassCache {
