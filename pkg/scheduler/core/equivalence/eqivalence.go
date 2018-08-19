@@ -76,6 +76,42 @@ func newNodeCache() *NodeCache {
 	}
 }
 
+// NodeCacheSnapshot represents a snapshot of NodeCache reference and generations.
+type NodeCacheSnapshot struct {
+	NodeCache   *NodeCache
+	Generations map[string]uint64
+}
+
+// UpdateNodeCacheSnapshots update node cache snapshots for given nodes. Create node cache if does not exist.
+func (c *Cache) UpdateNodeCacheSnapshots(nodes []*v1.Node, snapshots map[string]*NodeCacheSnapshot) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, node := range nodes {
+		if _, exists := c.nodeToCache[node.Name]; !exists {
+			c.nodeToCache[node.Name] = newNodeCache()
+		}
+	}
+	for name, n := range c.nodeToCache {
+		snapshot, ok := snapshots[name]
+		if !ok {
+			snapshot = &NodeCacheSnapshot{
+				Generations: make(map[string]uint64, len(n.generations)),
+			}
+			snapshots[name] = snapshot
+		}
+		snapshot.NodeCache = n
+		for k, v := range n.generations {
+			snapshot.Generations[k] = v
+		}
+	}
+	for name := range snapshots {
+		if _, ok := c.nodeToCache[name]; !ok {
+			delete(snapshots, name)
+		}
+	}
+	return
+}
+
 // GetNodeCache returns the existing NodeCache for given node if present. Otherwise,
 // it creates the NodeCache and returns it.
 // The boolean flag is true if the value was loaded, false if created.
@@ -201,6 +237,7 @@ type predicateResult struct {
 func (n *NodeCache) RunPredicate(
 	pred algorithm.FitPredicate,
 	predicateKey string,
+	predicateGeneration uint64,
 	pod *v1.Pod,
 	meta algorithm.PredicateMetadata,
 	nodeInfo *schedulercache.NodeInfo,
@@ -212,7 +249,7 @@ func (n *NodeCache) RunPredicate(
 		return false, []algorithm.PredicateFailureReason{}, fmt.Errorf("nodeInfo is nil or node is invalid")
 	}
 
-	result, generation, ok := n.lookupResult(pod.GetName(), nodeInfo.Node().GetName(), predicateKey, equivClass.hash)
+	result, ok := n.lookupResult(pod.GetName(), nodeInfo.Node().GetName(), predicateKey, equivClass.hash)
 	if ok {
 		return result.Fit, result.FailReasons, nil
 	}
@@ -221,7 +258,7 @@ func (n *NodeCache) RunPredicate(
 		return fit, reasons, err
 	}
 	if cache != nil {
-		n.updateResult(pod.GetName(), predicateKey, fit, reasons, generation, equivClass.hash, cache, nodeInfo)
+		n.updateResult(pod.GetName(), predicateKey, fit, reasons, predicateGeneration, equivClass.hash, cache, nodeInfo)
 	}
 	return fit, reasons, nil
 }
@@ -279,7 +316,7 @@ func (n *NodeCache) updateResult(
 func (n *NodeCache) lookupResult(
 	podName, nodeName, predicateKey string,
 	equivalenceHash uint64,
-) (value predicateResult, generation uint64, ok bool) {
+) (value predicateResult, ok bool) {
 	n.mu.RLock()
 	defer n.mu.RUnlock()
 	value, ok = n.cache[predicateKey][equivalenceHash]
@@ -288,12 +325,7 @@ func (n *NodeCache) lookupResult(
 	} else {
 		metrics.EquivalenceCacheMisses.Inc()
 	}
-	if val, ok := n.generations[predicateKey]; ok {
-		generation = val
-	} else {
-		generation = uint64(0)
-	}
-	return value, generation, ok
+	return value, ok
 }
 
 // invalidatePreds deletes cached predicates by given keys.
