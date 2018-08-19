@@ -19,7 +19,6 @@ package equivalence
 import (
 	"errors"
 	"reflect"
-	"sync"
 	"testing"
 
 	"k8s.io/api/core/v1"
@@ -233,14 +232,17 @@ func TestRunPredicate(t *testing.T) {
 
 			// Initialize and populate equivalence class cache.
 			ecache := NewCache()
-			nodeCache, _ := ecache.GetNodeCache(testNode.Name)
+			nodeCacheSnapshots := make(map[string]*NodeCacheSnapshot)
+			ecache.UpdateNodeCacheSnapshots([]*v1.Node{testNode}, nodeCacheSnapshots)
+			generations := nodeCacheSnapshots[testNode.Name].Generations
+			nodeCache := nodeCacheSnapshots[testNode.Name].NodeCache
 
 			equivClass := NewClass(pod)
 			if test.expectCacheHit {
 				nodeCache.updateResult(pod.Name, "testPredicate", test.expectFit, test.expectedReasons, 0, equivClass.hash, test.cache, node)
 			}
 
-			fit, reasons, err := nodeCache.RunPredicate(test.pred.predicate, "testPredicate", pod, meta, node, equivClass, test.cache)
+			fit, reasons, err := nodeCache.RunPredicate(test.pred.predicate, "testPredicate", generations["testPredicate"], pod, meta, node, equivClass, test.cache)
 
 			if err != nil {
 				if err.Error() != test.expectedError {
@@ -271,7 +273,7 @@ func TestRunPredicate(t *testing.T) {
 			if !test.expectCacheHit && test.pred.callCount == 0 {
 				t.Errorf("Predicate should be called")
 			}
-			_, _, ok := nodeCache.lookupResult(pod.Name, node.Node().Name, "testPredicate", equivClass.hash)
+			_, ok := nodeCache.lookupResult(pod.Name, node.Node().Name, "testPredicate", equivClass.hash)
 			if !ok && test.expectCacheWrite {
 				t.Errorf("Cache write should happen")
 			}
@@ -493,7 +495,7 @@ func TestLookupResult(t *testing.T) {
 				ecache.InvalidatePredicatesOnNode(test.nodeName, predicateKeys)
 			}
 			// calculate predicate with equivalence cache
-			result, _, ok := nodeCache.lookupResult(test.podName,
+			result, ok := nodeCache.lookupResult(test.podName,
 				test.nodeName,
 				test.predicateKey,
 				test.equivalenceHashForCalPredicate,
@@ -639,88 +641,6 @@ func TestGetEquivalenceHash(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestInvalidateCachedPredicateInflight(t *testing.T) {
-	testPredicate := "GeneralPredicates"
-	podName := "testPod"
-	nodeName := "node1"
-	equivalenceHashForUpdatePredicate := uint64(123)
-	cachedItem := predicateItemType{
-		fit: false,
-		reasons: []algorithm.PredicateFailureReason{
-			predicates.ErrPodNotFitsHostPorts,
-		},
-	}
-	cache := &schedulertesting.FakeCache{}
-	node := schedulercache.NewNodeInfo()
-	testNode := &v1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}}
-	node.SetNode(testNode)
-	ecache := NewCache()
-	nodeCache, _ := ecache.GetNodeCache(testNode.Name)
-
-	// update cache
-	nodeCache.updateResult(
-		podName,
-		testPredicate,
-		cachedItem.fit,
-		cachedItem.reasons,
-		0,
-		equivalenceHashForUpdatePredicate,
-		cache,
-		node,
-	)
-	// cache should exist
-	_, generation, ok := nodeCache.lookupResult(podName, nodeName, testPredicate, equivalenceHashForUpdatePredicate)
-	if !ok {
-		t.Errorf("Failed: cached item for predicate key: %v on node: %v should exist",
-			testPredicate, nodeName)
-	}
-
-	var wg sync.WaitGroup
-
-	cachedInvalidatedCh := make(chan struct{})
-	beforeUpdatingCacheCh := make(chan struct{})
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		result := predicateResult{
-			Fit:         cachedItem.fit,
-			FailReasons: cachedItem.reasons,
-		}
-		close(beforeUpdatingCacheCh)
-		// objects are updated and cache is invalidated
-		<-cachedInvalidatedCh
-		nodeCache.updateResult(
-			podName,
-			testPredicate,
-			result.Fit,
-			result.FailReasons,
-			generation,
-			equivalenceHashForUpdatePredicate,
-			cache,
-			node,
-		)
-	}()
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		<-beforeUpdatingCacheCh
-		// objects are updated during predicate check was running
-		cachedItem.fit = true
-		// invalidate cache
-		ecache.InvalidatePredicates(sets.NewString(testPredicate))
-		close(cachedInvalidatedCh)
-	}()
-
-	wg.Wait()
-	_, _, ok = nodeCache.lookupResult(podName, nodeName, testPredicate, equivalenceHashForUpdatePredicate)
-	if ok {
-		t.Errorf("Failed: cached item for predicate key: %v on node: %v should be invalidated",
-			testPredicate, nodeName)
 	}
 }
 
