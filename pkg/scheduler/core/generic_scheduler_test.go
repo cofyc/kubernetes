@@ -1506,11 +1506,11 @@ func TestCacheInvalidationRace(t *testing.T) {
 }
 
 // TestCacheInvalidationRace2 tests that cache invalidation is correctly handled
-// when an invalidation event happens during predicate is running.
+// when an invalidation event happens while a predicate is running.
 func TestCacheInvalidationRace2(t *testing.T) {
 	// Create a predicate that returns false the first time and true on subsequent calls.
-	podWillFit := false
 	var (
+		podWillFit       = false
 		callCount        int
 		cycleStart       = make(chan struct{})
 		cacheInvalidated = make(chan struct{})
@@ -1520,22 +1520,15 @@ func TestCacheInvalidationRace2(t *testing.T) {
 		meta algorithm.PredicateMetadata,
 		nodeInfo *schedulercache.NodeInfo) (bool, []algorithm.PredicateFailureReason, error) {
 		callCount++
-		var (
-			fit            bool
-			failureReasons []algorithm.PredicateFailureReason
-		)
-		if !podWillFit {
-			podWillFit = true
-			fit = false
-			failureReasons = append(failureReasons, algorithmpredicates.ErrFakePredicate)
-		} else {
-			fit = true
-		}
 		once.Do(func() {
 			cycleStart <- struct{}{}
 			<-cacheInvalidated
 		})
-		return fit, failureReasons, nil
+		if !podWillFit {
+			podWillFit = true
+			return false, []algorithm.PredicateFailureReason{algorithmpredicates.ErrFakePredicate}, nil
+		}
+		return true, nil, nil
 	}
 
 	// Set up the mock cache.

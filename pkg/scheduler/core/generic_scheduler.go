@@ -130,7 +130,15 @@ func (g *genericScheduler) Schedule(pod *v1.Pod, nodeLister algorithm.NodeLister
 		return "", ErrNoNodesAvailable
 	}
 
-	// Snapshot all predicate generations and references of node caches.
+	// IMPORTANT NOTE: Because the scheduler uses snapshots of schedulerCache
+	// in predicating, we must snapshot all predicate generations and
+	// references of node cache before snapshotting scheduler cache, otherwise
+	// stale data may be written into equivalence cache, e.g.
+	// 1. snapshot cache
+	// 2. event arrives, updating cache and invalidating predicates or whole node cache
+	// 3. snapshot ecache
+	// 4. evaludate predicates
+	// 5. stale result will be written to ecache
 	if g.equivalenceCache != nil {
 		g.equivalenceCache.UpdateNodeCacheSnapshots(nodes, g.nodeCacheSnapshots)
 	}
@@ -409,7 +417,6 @@ func (g *genericScheduler) findNodesThatFit(pod *v1.Pod, nodes []*v1.Node) ([]*v
 				meta,
 				g.cachedNodeInfoMap[nodeName],
 				g.predicates,
-				g.cache,
 				nodeCache,
 				predicateGenerations,
 				g.schedulingQueue,
@@ -524,7 +531,6 @@ func podFitsOnNode(
 	meta algorithm.PredicateMetadata,
 	info *schedulercache.NodeInfo,
 	predicateFuncs map[string]algorithm.FitPredicate,
-	cache schedulercache.Cache,
 	nodeCache *equivalence.NodeCache,
 	predicateGenerations map[string]uint64,
 	queue SchedulingQueue,
@@ -576,11 +582,7 @@ func podFitsOnNode(
 			//TODO (yastij) : compute average predicate restrictiveness to export it as Prometheus metric
 			if predicate, exist := predicateFuncs[predicateKey]; exist {
 				if eCacheAvailable {
-					predicateGeneration := uint64(0)
-					if predicateGenerations != nil {
-						predicateGeneration = predicateGenerations[predicateKey]
-					}
-					fit, reasons, err = nodeCache.RunPredicate(predicate, predicateKey, predicateGeneration, pod, metaToUse, nodeInfoToUse, equivClass, cache)
+					fit, reasons, err = nodeCache.RunPredicate(predicate, predicateKey, predicateGenerations[predicateKey], pod, metaToUse, nodeInfoToUse, equivClass)
 				} else {
 					fit, reasons, err = predicate(pod, metaToUse, nodeInfoToUse)
 				}
@@ -1004,7 +1006,7 @@ func selectVictimsOnNode(
 	// that we should check is if the "pod" is failing to schedule due to pod affinity
 	// failure.
 	// TODO(bsalamat): Consider checking affinity to lower priority pods if feasible with reasonable performance.
-	if fits, _, err := podFitsOnNode(pod, meta, nodeInfoCopy, fitPredicates, nil, nil, nil, queue, false, nil); !fits {
+	if fits, _, err := podFitsOnNode(pod, meta, nodeInfoCopy, fitPredicates, nil, nil, queue, false, nil); !fits {
 		if err != nil {
 			glog.Warningf("Encountered error while selecting victims on node %v: %v", nodeInfo.Node().Name, err)
 		}
@@ -1018,7 +1020,7 @@ func selectVictimsOnNode(
 	violatingVictims, nonViolatingVictims := filterPodsWithPDBViolation(potentialVictims.Items, pdbs)
 	reprievePod := func(p *v1.Pod) bool {
 		addPod(p)
-		fits, _, _ := podFitsOnNode(pod, meta, nodeInfoCopy, fitPredicates, nil, nil, nil, queue, false, nil)
+		fits, _, _ := podFitsOnNode(pod, meta, nodeInfoCopy, fitPredicates, nil, nil, queue, false, nil)
 		if !fits {
 			removePod(p)
 			victims = append(victims, p)
