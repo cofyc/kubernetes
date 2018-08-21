@@ -242,7 +242,6 @@ func (n *NodeCache) RunPredicate(
 	meta algorithm.PredicateMetadata,
 	nodeInfo *schedulercache.NodeInfo,
 	equivClass *Class,
-	cache schedulercache.Cache,
 ) (bool, []algorithm.PredicateFailureReason, error) {
 	if nodeInfo == nil || nodeInfo.Node() == nil {
 		// This may happen during tests.
@@ -257,9 +256,7 @@ func (n *NodeCache) RunPredicate(
 	if err != nil {
 		return fit, reasons, err
 	}
-	if cache != nil {
-		n.updateResult(pod.GetName(), predicateKey, fit, reasons, predicateGeneration, equivClass.hash, cache, nodeInfo)
-	}
+	n.updateResult(pod.GetName(), predicateKey, fit, reasons, predicateGeneration, equivClass.hash, nodeInfo)
 	return fit, reasons, nil
 }
 
@@ -270,7 +267,6 @@ func (n *NodeCache) updateResult(
 	reasons []algorithm.PredicateFailureReason,
 	generation uint64,
 	equivalenceHash uint64,
-	cache schedulercache.Cache,
 	nodeInfo *schedulercache.NodeInfo,
 ) {
 	if nodeInfo == nil || nodeInfo.Node() == nil {
@@ -286,14 +282,12 @@ func (n *NodeCache) updateResult(
 
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	liveGeneration, ok := n.generations[predicateKey]
-	if !ok {
-		liveGeneration = 0
-	}
+	liveGeneration := n.generations[predicateKey]
 	if generation != liveGeneration {
 		// Generation of this predicate has been updated since we last looked
 		// up, this indicates that we received a invalidation request during
 		// this time. Cache may be stale, skip update.
+		metrics.EquivalenceCacheWrites.WithLabelValues("discarded_stale").Inc()
 		return
 	}
 	// If cached predicate map already exists, just update the predicate by key
@@ -334,11 +328,7 @@ func (n *NodeCache) invalidatePreds(predicateKeys sets.String) {
 	defer n.mu.Unlock()
 	for predicateKey := range predicateKeys {
 		delete(n.cache, predicateKey)
-		if _, ok := n.generations[predicateKey]; ok {
-			n.generations[predicateKey]++
-		} else {
-			n.generations[predicateKey] = 1
-		}
+		n.generations[predicateKey]++
 	}
 }
 
