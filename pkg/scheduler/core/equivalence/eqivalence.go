@@ -70,8 +70,9 @@ func NewCache() *Cache {
 type NodeCache struct {
 	mu    sync.RWMutex
 	cache predicateMap
-	// Generations for predicates, incremented on predicate invalidation.
-	// Created on first update. Use 0 if does not exist.
+	// generations stores generation numbers for predicates, incremented on
+	// predicate invalidation. Created on first update. Use 0 if does not
+	// exist.
 	generations map[string]uint64
 }
 
