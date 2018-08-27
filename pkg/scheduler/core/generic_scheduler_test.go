@@ -388,9 +388,9 @@ func TestGenericScheduler(t *testing.T) {
 			predicates:               map[string]algorithm.FitPredicate{"true": truePredicate, "matches": matchesPredicate, "false": falsePredicate},
 			prioritizers:             []algorithm.PriorityConfig{{Map: EqualPriorityMap, Weight: 1}},
 			alwaysCheckAllPredicates: true,
-			nodes: []string{"1"},
-			pod:   &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "2", UID: types.UID("2")}},
-			name:  "test alwaysCheckAllPredicates is true",
+			nodes:                    []string{"1"},
+			pod:                      &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "2", UID: types.UID("2")}},
+			name:                     "test alwaysCheckAllPredicates is true",
 			wErr: &FitError{
 				Pod:         &v1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "2", UID: types.UID("2")}},
 				NumAllNodes: 1,
@@ -1456,7 +1456,9 @@ func TestCacheInvalidationRace(t *testing.T) {
 		cacheInvalidated: make(chan struct{}),
 	}
 
-	eCache := equivalence.NewCache()
+	ps := map[string]algorithm.FitPredicate{"testPredicate": testPredicate}
+	algorithmpredicates.SetPredicatesOrdering([]string{"testPredicate"})
+	eCache := equivalence.NewCache(algorithmpredicates.Ordering())
 	// Ensure that equivalence cache invalidation happens after the scheduling cycle starts, but before
 	// the equivalence cache would be updated.
 	go func() {
@@ -1472,8 +1474,6 @@ func TestCacheInvalidationRace(t *testing.T) {
 	}()
 
 	// Set up the scheduler.
-	ps := map[string]algorithm.FitPredicate{"testPredicate": testPredicate}
-	algorithmpredicates.SetPredicatesOrdering([]string{"testPredicate"})
 	prioritizers := []algorithm.PriorityConfig{{Map: EqualPriorityMap, Weight: 1}}
 	pvcLister := schedulertesting.FakePersistentVolumeClaimLister([]*v1.PersistentVolumeClaim{})
 	scheduler := NewGenericScheduler(
@@ -1536,7 +1536,9 @@ func TestCacheInvalidationRace2(t *testing.T) {
 	testNode := &v1.Node{ObjectMeta: metav1.ObjectMeta{Name: "machine1"}}
 	cache.AddNode(testNode)
 
-	eCache := equivalence.NewCache()
+	ps := map[string]algorithm.FitPredicate{"testPredicate": testPredicate}
+	algorithmpredicates.SetPredicatesOrdering([]string{"testPredicate"})
+	eCache := equivalence.NewCache(algorithmpredicates.Ordering())
 	// Ensure that equivalence cache invalidation happens after the scheduling cycle starts, but before
 	// the equivalence cache would be updated.
 	go func() {
@@ -1552,8 +1554,6 @@ func TestCacheInvalidationRace2(t *testing.T) {
 	}()
 
 	// Set up the scheduler.
-	ps := map[string]algorithm.FitPredicate{"testPredicate": testPredicate}
-	algorithmpredicates.SetPredicatesOrdering([]string{"testPredicate"})
 	prioritizers := []algorithm.PriorityConfig{{Map: EqualPriorityMap, Weight: 1}}
 	pvcLister := schedulertesting.FakePersistentVolumeClaimLister([]*v1.PersistentVolumeClaim{})
 	scheduler := NewGenericScheduler(

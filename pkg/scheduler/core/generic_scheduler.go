@@ -405,7 +405,7 @@ func (g *genericScheduler) findNodesThatFit(pod *v1.Pod, nodes []*v1.Node) ([]*v
 		checkNode := func(i int) {
 			var (
 				nodeCache            *equivalence.NodeCache
-				predicateGenerations map[string]uint64
+				predicateGenerations []uint64
 			)
 			nodeName := g.cache.NodeTree().Next()
 			if nodeCacheSnapshot, ok := g.nodeCacheSnapshots[nodeName]; ok {
@@ -532,7 +532,7 @@ func podFitsOnNode(
 	info *schedulercache.NodeInfo,
 	predicateFuncs map[string]algorithm.FitPredicate,
 	nodeCache *equivalence.NodeCache,
-	predicateGenerations map[string]uint64,
+	predicateGenerations []uint64,
 	queue SchedulingQueue,
 	alwaysCheckAllPredicates bool,
 	equivClass *equivalence.Class,
@@ -573,7 +573,7 @@ func podFitsOnNode(
 		// TODO(bsalamat): consider using eCache and adding proper eCache invalidations
 		// when pods are nominated or their nominations change.
 		eCacheAvailable = equivClass != nil && nodeCache != nil && !podsAdded
-		for _, predicateKey := range predicates.Ordering() {
+		for predicateID, predicateKey := range predicates.Ordering() {
 			var (
 				fit     bool
 				reasons []algorithm.PredicateFailureReason
@@ -582,7 +582,7 @@ func podFitsOnNode(
 			//TODO (yastij) : compute average predicate restrictiveness to export it as Prometheus metric
 			if predicate, exist := predicateFuncs[predicateKey]; exist {
 				if eCacheAvailable {
-					fit, reasons, err = nodeCache.RunPredicate(predicate, predicateKey, predicateGenerations[predicateKey], pod, metaToUse, nodeInfoToUse, equivClass)
+					fit, reasons, err = nodeCache.RunPredicate(predicate, predicateID, predicateGenerations[predicateID], pod, metaToUse, nodeInfoToUse, equivClass)
 				} else {
 					fit, reasons, err = predicate(pod, metaToUse, nodeInfoToUse)
 				}
