@@ -90,8 +90,8 @@ type NodeCacheSnapshot struct {
 	Generations map[string]uint64
 }
 
-// UpdateNodeCacheSnapshots update node cache snapshots for given nodes. Create node cache if does not exist.
-func (c *Cache) UpdateNodeCacheSnapshots(nodes []*v1.Node, snapshots map[string]*NodeCacheSnapshot) {
+// GetNodeCacheSnapshots returns node cache snapshots for given nodes. Create node cache if does not exist.
+func (c *Cache) GetNodeCacheSnapshots(nodes []*v1.Node) (snapshots map[string]*NodeCacheSnapshot) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, node := range nodes {
@@ -99,23 +99,16 @@ func (c *Cache) UpdateNodeCacheSnapshots(nodes []*v1.Node, snapshots map[string]
 			c.nodeToCache[node.Name] = newNodeCache()
 		}
 	}
+	snapshots = make(map[string]*NodeCacheSnapshot, len(c.nodeToCache))
 	for name, n := range c.nodeToCache {
-		snapshot, ok := snapshots[name]
-		if !ok {
-			snapshot = &NodeCacheSnapshot{
-				Generations: make(map[string]uint64, len(n.generations)),
-			}
-			snapshots[name] = snapshot
+		snapshot := &NodeCacheSnapshot{
+			NodeCache:   n,
+			Generations: make(map[string]uint64, len(n.generations)),
 		}
-		snapshot.NodeCache = n
 		for k, v := range n.generations {
 			snapshot.Generations[k] = v
 		}
-	}
-	for name := range snapshots {
-		if _, ok := c.nodeToCache[name]; !ok {
-			delete(snapshots, name)
-		}
+		snapshots[name] = snapshot
 	}
 	return
 }

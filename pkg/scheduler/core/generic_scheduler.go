@@ -140,7 +140,7 @@ func (g *genericScheduler) Schedule(pod *v1.Pod, nodeLister algorithm.NodeLister
 	// 4. evaludate predicates
 	// 5. stale result will be written to ecache
 	if g.equivalenceCache != nil {
-		g.equivalenceCache.UpdateNodeCacheSnapshots(nodes, g.nodeCacheSnapshots)
+		g.nodeCacheSnapshots = g.equivalenceCache.GetNodeCacheSnapshots(nodes)
 	}
 
 	// Used for all fit and priority funcs.
