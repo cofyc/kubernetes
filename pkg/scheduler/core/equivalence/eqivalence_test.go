@@ -171,7 +171,6 @@ func TestRunPredicate(t *testing.T) {
 	tests := []struct {
 		name                                        string
 		pred                                        mockPredicate
-		generation                                  uint64
 		expectFit, expectCacheHit, expectCacheWrite bool
 		expectedReasons                             []algorithm.PredicateFailureReason
 		expectedError                               string
@@ -190,14 +189,13 @@ func TestRunPredicate(t *testing.T) {
 			expectCacheHit:   false,
 			expectCacheWrite: true,
 		},
-		{
-			name:             "pod fits/cache miss/no write",
-			pred:             mockPredicate{fit: true},
-			generation:       1,
-			expectFit:        true,
-			expectCacheHit:   false,
-			expectCacheWrite: false,
-		},
+		// {
+		// name:             "pod fits/cache miss/no write",
+		// pred:             mockPredicate{fit: true},
+		// expectFit:        true,
+		// expectCacheHit:   false,
+		// expectCacheWrite: false,
+		// },
 		{
 			name:             "pod doesn't fit/cache miss",
 			pred:             mockPredicate{reasons: []algorithm.PredicateFailureReason{predicates.ErrFakePredicate}},
@@ -234,16 +232,15 @@ func TestRunPredicate(t *testing.T) {
 
 			// Initialize and populate equivalence class cache.
 			ecache := NewCache()
-			nodeCacheSnapshots := make(map[string]*NodeCacheSnapshot)
-			ecache.UpdateNodeCacheSnapshots([]*v1.Node{testNode}, nodeCacheSnapshots)
-			nodeCache := nodeCacheSnapshots[testNode.Name].NodeCache
+			ecache.Snapshot([]*v1.Node{testNode})
+			nodeCache, _ := ecache.GetNodeCache(testNode.Name)
 
 			equivClass := NewClass(pod)
 			if test.expectCacheHit {
-				nodeCache.updateResult(pod.Name, "testPredicate", test.expectFit, test.expectedReasons, test.generation, equivClass.hash, node)
+				nodeCache.updateResult(pod.Name, "testPredicate", test.expectFit, test.expectedReasons, equivClass.hash, node)
 			}
 
-			fit, reasons, err := nodeCache.RunPredicate(test.pred.predicate, "testPredicate", test.generation, pod, meta, node, equivClass)
+			fit, reasons, err := nodeCache.RunPredicate(test.pred.predicate, "testPredicate", pod, meta, node, equivClass)
 
 			if err != nil {
 				if err.Error() != test.expectedError {
@@ -350,7 +347,6 @@ func TestUpdateResult(t *testing.T) {
 				test.predicateKey,
 				test.fit,
 				test.reasons,
-				0,
 				test.equivalenceHash,
 				node,
 			)
@@ -475,7 +471,6 @@ func TestLookupResult(t *testing.T) {
 				test.predicateKey,
 				test.cachedItem.fit,
 				test.cachedItem.reasons,
-				0,
 				test.equivalenceHashForUpdatePredicate,
 				node,
 			)
@@ -693,7 +688,6 @@ func TestInvalidateCachedPredicateItemOfAllNodes(t *testing.T) {
 			testPredicate,
 			test.cachedItem.fit,
 			test.cachedItem.reasons,
-			0,
 			test.equivalenceHashForUpdatePredicate,
 			node,
 		)
@@ -769,7 +763,6 @@ func TestInvalidateAllCachedPredicateItemOfNode(t *testing.T) {
 			testPredicate,
 			test.cachedItem.fit,
 			test.cachedItem.reasons,
-			0,
 			test.equivalenceHashForUpdatePredicate,
 			node,
 		)
@@ -777,9 +770,11 @@ func TestInvalidateAllCachedPredicateItemOfNode(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			oldNodeCache, _ := ecache.GetNodeCache(test.nodeName)
+			oldGeneration := oldNodeCache.generation
 			// invalidate cached predicate for all nodes
 			ecache.InvalidateAllPredicatesOnNode(test.nodeName)
-			if _, ok := ecache.GetNodeCache(test.nodeName); ok {
+			if n, _ := ecache.GetNodeCache(test.nodeName); oldGeneration == n.generation {
 				t.Errorf("Failed: cached item for node: %v should be invalidated", test.nodeName)
 			}
 		})
