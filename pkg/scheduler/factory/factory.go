@@ -1165,7 +1165,7 @@ func (c *configFactory) CreateFromKeys(predicateKeys, priorityKeys sets.String, 
 
 	// Init equivalence class cache
 	if c.enableEquivalenceClassCache {
-		c.equivalencePodCache = equivalence.NewCache()
+		c.equivalencePodCache = equivalence.NewCache(predicates.Ordering())
 		glog.Info("Created equivalence class cache")
 	}
 
