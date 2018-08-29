@@ -84,7 +84,7 @@ func newNodeCache() *NodeCache {
 	}
 }
 
-// NodeCacheSnapshot represents a snapshot of NodeCache reference and generations.
+// NodeCacheSnapshot represents a snapshot of NodeCache generations.
 type NodeCacheSnapshot struct {
 	NodeCache   *NodeCache
 	Generations map[string]uint64
@@ -298,9 +298,9 @@ func (n *NodeCache) updateResult(
 	defer n.mu.Unlock()
 	liveGeneration := n.generations[predicateKey]
 	if generation != liveGeneration {
-		// Generation of this predicate has been updated since we last looked
-		// up, this indicates that we received a invalidation request during
-		// this time. Cache may be stale, skip update.
+		// Generation of this predicate has been updated since we last took a
+		// snapshot, this indicates that we received a invalidation request
+		// during this time. Cache may be stale, skip update.
 		metrics.EquivalenceCacheWrites.WithLabelValues("discarded_stale").Inc()
 		return
 	}
@@ -319,8 +319,8 @@ func (n *NodeCache) updateResult(
 		nodeInfo.Node().Name, predicateKey, podName, predicateItem)
 }
 
-// lookupResult returns cached predicate results with a associated generation
-// and a bool saying whether a cache entry was found.
+// lookupResult returns cached predicate results and a bool saying whether a
+// cache entry was found.
 func (n *NodeCache) lookupResult(
 	podName, nodeName, predicateKey string,
 	equivalenceHash uint64,
