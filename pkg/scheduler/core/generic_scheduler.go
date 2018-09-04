@@ -96,7 +96,6 @@ func (f *FitError) Error() string {
 type genericScheduler struct {
 	cache                    schedulercache.Cache
 	equivalenceCache         *equivalence.Cache
-	nodeCacheSnapshots       map[string]*equivalence.NodeCacheSnapshot
 	schedulingQueue          SchedulingQueue
 	predicates               map[string]algorithm.FitPredicate
 	priorityMetaProducer     algorithm.PriorityMetadataProducer
@@ -131,17 +130,16 @@ func (g *genericScheduler) Schedule(pod *v1.Pod, nodeLister algorithm.NodeLister
 		return "", ErrNoNodesAvailable
 	}
 
-	// IMPORTANT NOTE: Because the scheduler uses snapshots of schedulerCache
-	// in predicating, we must snapshot all predicate generations and
-	// references of node cache before snapshotting scheduler cache, otherwise
-	// stale data may be written into equivalence cache, e.g.
+	// IMPORTANT NOTE: We must snapshot equivalence cache before snapshotting
+	// scheduler cache, otherwise stale data may be written into equivalence
+	// cache, e.g.
 	// 1. snapshot cache
 	// 2. event arrives, updating cache and invalidating predicates or whole node cache
 	// 3. snapshot ecache
 	// 4. evaludate predicates
 	// 5. stale result will be written to ecache
 	if g.equivalenceCache != nil {
-		g.equivalenceCache.UpdateNodeCacheSnapshots(nodes, g.nodeCacheSnapshots)
+		g.equivalenceCache.Snapshot(nodes)
 	}
 
 	// Used for all fit and priority funcs.
@@ -408,13 +406,11 @@ func (g *genericScheduler) findNodesThatFit(pod *v1.Pod, nodes []*v1.Node) ([]*v
 
 		checkNode := func(i int) {
 			var (
-				nodeCache            *equivalence.NodeCache
-				predicateGenerations map[string]uint64
+				nodeCache *equivalence.NodeCache
 			)
 			nodeName := g.cache.NodeTree().Next()
-			if nodeCacheSnapshot, ok := g.nodeCacheSnapshots[nodeName]; ok {
-				nodeCache = nodeCacheSnapshot.NodeCache
-				predicateGenerations = nodeCacheSnapshot.Generations
+			if g.equivalenceCache != nil {
+				nodeCache, _ = g.equivalenceCache.GetNodeCache(nodeName)
 			}
 			fits, failedPredicates, err := podFitsOnNode(
 				pod,
@@ -422,7 +418,6 @@ func (g *genericScheduler) findNodesThatFit(pod *v1.Pod, nodes []*v1.Node) ([]*v
 				g.cachedNodeInfoMap[nodeName],
 				g.predicates,
 				nodeCache,
-				predicateGenerations,
 				g.schedulingQueue,
 				g.alwaysCheckAllPredicates,
 				equivClass,
@@ -535,7 +530,6 @@ func podFitsOnNode(
 	info *schedulercache.NodeInfo,
 	predicateFuncs map[string]algorithm.FitPredicate,
 	nodeCache *equivalence.NodeCache,
-	predicateGenerations map[string]uint64,
 	queue SchedulingQueue,
 	alwaysCheckAllPredicates bool,
 	equivClass *equivalence.Class,
@@ -585,7 +579,7 @@ func podFitsOnNode(
 			//TODO (yastij) : compute average predicate restrictiveness to export it as Prometheus metric
 			if predicate, exist := predicateFuncs[predicateKey]; exist {
 				if eCacheAvailable {
-					fit, reasons, err = nodeCache.RunPredicate(predicate, predicateKey, predicateGenerations[predicateKey], pod, metaToUse, nodeInfoToUse, equivClass)
+					fit, reasons, err = nodeCache.RunPredicate(predicate, predicateKey, pod, metaToUse, nodeInfoToUse, equivClass)
 				} else {
 					fit, reasons, err = predicate(pod, metaToUse, nodeInfoToUse)
 				}
@@ -1009,7 +1003,7 @@ func selectVictimsOnNode(
 	// that we should check is if the "pod" is failing to schedule due to pod affinity
 	// failure.
 	// TODO(bsalamat): Consider checking affinity to lower priority pods if feasible with reasonable performance.
-	if fits, _, err := podFitsOnNode(pod, meta, nodeInfoCopy, fitPredicates, nil, nil, queue, false, nil); !fits {
+	if fits, _, err := podFitsOnNode(pod, meta, nodeInfoCopy, fitPredicates, nil, queue, false, nil); !fits {
 		if err != nil {
 			glog.Warningf("Encountered error while selecting victims on node %v: %v", nodeInfo.Node().Name, err)
 		}
@@ -1023,7 +1017,7 @@ func selectVictimsOnNode(
 	violatingVictims, nonViolatingVictims := filterPodsWithPDBViolation(potentialVictims.Items, pdbs)
 	reprievePod := func(p *v1.Pod) bool {
 		addPod(p)
-		fits, _, _ := podFitsOnNode(pod, meta, nodeInfoCopy, fitPredicates, nil, nil, queue, false, nil)
+		fits, _, _ := podFitsOnNode(pod, meta, nodeInfoCopy, fitPredicates, nil, queue, false, nil)
 		if !fits {
 			removePod(p)
 			victims = append(victims, p)
@@ -1155,7 +1149,6 @@ func NewGenericScheduler(
 	return &genericScheduler{
 		cache:                    cache,
 		equivalenceCache:         eCache,
-		nodeCacheSnapshots:       make(map[string]*equivalence.NodeCacheSnapshot),
 		schedulingQueue:          podQueue,
 		predicates:               predicates,
 		predicateMetaProducer:    predicateMetaProducer,

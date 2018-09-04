@@ -68,30 +68,28 @@ func NewCache() *Cache {
 //
 // NodeCache objects are thread safe within the context of NodeCache,
 type NodeCache struct {
-	mu    sync.RWMutex
-	cache predicateMap
-	// generations stores generation numbers for predicates, incremented on
+	mu                 sync.RWMutex
+	cache              predicateMap
+	generation         uint64
+	snapshotGeneration uint64
+	// predicateGenerations stores generation numbers for predicates, incremented on
 	// predicate invalidation. Created on first update. Use 0 if does not
 	// exist.
-	generations map[string]uint64
+	predicateGenerations         map[string]uint64
+	snapshotPredicateGenerations map[string]uint64
 }
 
 // newNodeCache returns an empty NodeCache.
 func newNodeCache() *NodeCache {
 	return &NodeCache{
-		cache:       make(predicateMap),
-		generations: make(map[string]uint64),
+		cache:                        make(predicateMap),
+		predicateGenerations:         make(map[string]uint64),
+		snapshotPredicateGenerations: make(map[string]uint64),
 	}
 }
 
-// NodeCacheSnapshot represents a snapshot of NodeCache generations.
-type NodeCacheSnapshot struct {
-	NodeCache   *NodeCache
-	Generations map[string]uint64
-}
-
-// UpdateNodeCacheSnapshots update node cache snapshots for given nodes. Create node cache if does not exist.
-func (c *Cache) UpdateNodeCacheSnapshots(nodes []*v1.Node, snapshots map[string]*NodeCacheSnapshot) {
+// Snapshot snapshots current generations of cache.
+func (c *Cache) Snapshot(nodes []*v1.Node) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for _, node := range nodes {
@@ -99,23 +97,13 @@ func (c *Cache) UpdateNodeCacheSnapshots(nodes []*v1.Node, snapshots map[string]
 			c.nodeToCache[node.Name] = newNodeCache()
 		}
 	}
-	for name, n := range c.nodeToCache {
-		snapshot, ok := snapshots[name]
-		if !ok {
-			snapshot = &NodeCacheSnapshot{
-				Generations: make(map[string]uint64, len(n.generations)),
-			}
-			snapshots[name] = snapshot
+	for _, n := range c.nodeToCache {
+		// snapshot predicate generations
+		for k, v := range n.predicateGenerations {
+			n.snapshotPredicateGenerations[k] = v
 		}
-		snapshot.NodeCache = n
-		for k, v := range n.generations {
-			snapshot.Generations[k] = v
-		}
-	}
-	for name := range snapshots {
-		if _, ok := c.nodeToCache[name]; !ok {
-			delete(snapshots, name)
-		}
+		// snapshot node generation
+		n.snapshotGeneration = n.generation
 	}
 	return
 }
@@ -163,7 +151,9 @@ func (c *Cache) InvalidatePredicatesOnNode(nodeName string, predicateKeys sets.S
 func (c *Cache) InvalidateAllPredicatesOnNode(nodeName string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	delete(c.nodeToCache, nodeName)
+	if node, ok := c.nodeToCache[nodeName]; ok {
+		node.invalidate()
+	}
 	glog.V(5).Infof("Cache invalidation: node=%s,predicates=*", nodeName)
 }
 
@@ -251,7 +241,6 @@ type predicateResult struct {
 func (n *NodeCache) RunPredicate(
 	pred algorithm.FitPredicate,
 	predicateKey string,
-	predicateGeneration uint64,
 	pod *v1.Pod,
 	meta algorithm.PredicateMetadata,
 	nodeInfo *schedulercache.NodeInfo,
@@ -270,7 +259,7 @@ func (n *NodeCache) RunPredicate(
 	if err != nil {
 		return fit, reasons, err
 	}
-	n.updateResult(pod.GetName(), predicateKey, fit, reasons, predicateGeneration, equivClass.hash, nodeInfo)
+	n.updateResult(pod.GetName(), predicateKey, fit, reasons, equivClass.hash, nodeInfo)
 	return fit, reasons, nil
 }
 
@@ -279,7 +268,6 @@ func (n *NodeCache) updateResult(
 	podName, predicateKey string,
 	fit bool,
 	reasons []algorithm.PredicateFailureReason,
-	generation uint64,
 	equivalenceHash uint64,
 	nodeInfo *schedulercache.NodeInfo,
 ) {
@@ -296,10 +284,9 @@ func (n *NodeCache) updateResult(
 
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	liveGeneration := n.generations[predicateKey]
-	if generation != liveGeneration {
-		// Generation of this predicate has been updated since we last took a
-		// snapshot, this indicates that we received a invalidation request
+	if (n.snapshotGeneration != n.generation) || (n.snapshotPredicateGenerations[predicateKey] != n.predicateGenerations[predicateKey]) {
+		// Generation of node or predicate has been updated since we last took
+		// a snapshot, this indicates that we received a invalidation request
 		// during this time. Cache may be stale, skip update.
 		metrics.EquivalenceCacheWrites.WithLabelValues("discarded_stale").Inc()
 		return
@@ -342,8 +329,16 @@ func (n *NodeCache) invalidatePreds(predicateKeys sets.String) {
 	defer n.mu.Unlock()
 	for predicateKey := range predicateKeys {
 		delete(n.cache, predicateKey)
-		n.generations[predicateKey]++
+		n.predicateGenerations[predicateKey]++
 	}
+}
+
+// invalidate invalidates node cache.
+func (n *NodeCache) invalidate() {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.cache = make(predicateMap)
+	n.generation++
 }
 
 // equivalencePod is the set of pod attributes which must match for two pods to
