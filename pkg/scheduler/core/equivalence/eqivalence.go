@@ -35,9 +35,6 @@ import (
 	"github.com/golang/glog"
 )
 
-// nodeMap stores a *Cache for each node.
-type nodeMap map[string]*NodeCache
-
 // Cache is a thread safe map saves and reuses the output of predicate functions,
 // it uses node name as key to access those cached results.
 //
@@ -45,17 +42,13 @@ type nodeMap map[string]*NodeCache
 // class". (Equivalence class is defined in the `Class` type.) Saved results
 // will be reused until an appropriate invalidation function is called.
 type Cache struct {
-	// NOTE(harry): Theoretically sync.Map has better performance in machine with 8+ CPUs, while
-	// the reality is lock contention in first level cache is rare.
-	mu          sync.RWMutex
-	nodeToCache nodeMap
+	// i.e. map[string]*NodeCache
+	sync.Map
 }
 
 // NewCache create an empty equiv class cache.
 func NewCache() *Cache {
-	return &Cache{
-		nodeToCache: make(nodeMap),
-	}
+	return new(Cache)
 }
 
 // NodeCache saves and reuses the output of predicate functions. Use RunPredicate to
@@ -90,16 +83,18 @@ func newNodeCache() *NodeCache {
 
 // Snapshot snapshots current generations of cache.
 func (c *Cache) Snapshot() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for _, n := range c.nodeToCache {
+	c.Range(func(_, v interface{}) bool {
+		n := v.(*NodeCache)
+		n.mu.Lock()
+		defer n.mu.Unlock()
 		// snapshot predicate generations
 		for k, v := range n.predicateGenerations {
 			n.snapshotPredicateGenerations[k] = v
 		}
 		// snapshot node generation
 		n.snapshotGeneration = n.generation
-	}
+		return true
+	})
 	return
 }
 
@@ -107,12 +102,8 @@ func (c *Cache) Snapshot() {
 // it creates the NodeCache and returns it.
 // The boolean flag is true if the value was loaded, false if created.
 func (c *Cache) GetNodeCache(name string) (nodeCache *NodeCache, exists bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if nodeCache, exists = c.nodeToCache[name]; !exists {
-		nodeCache = newNodeCache()
-		c.nodeToCache[name] = nodeCache
-	}
+	v, exists := c.LoadOrStore(name, newNodeCache())
+	nodeCache = v.(*NodeCache)
 	return
 }
 
@@ -121,12 +112,13 @@ func (c *Cache) InvalidatePredicates(predicateKeys sets.String) {
 	if len(predicateKeys) == 0 {
 		return
 	}
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	for _, n := range c.nodeToCache {
+	c.Range(func(k, v interface{}) bool {
+		n := v.(*NodeCache)
 		n.invalidatePreds(predicateKeys)
-	}
+		return true
+	})
 	glog.V(5).Infof("Cache invalidation: node=*,predicates=%v", predicateKeys)
+
 }
 
 // InvalidatePredicatesOnNode clears cached results for the given predicates on one node.
@@ -134,9 +126,8 @@ func (c *Cache) InvalidatePredicatesOnNode(nodeName string, predicateKeys sets.S
 	if len(predicateKeys) == 0 {
 		return
 	}
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if n, ok := c.nodeToCache[nodeName]; ok {
+	if v, ok := c.Load(nodeName); ok {
+		n := v.(*NodeCache)
 		n.invalidatePreds(predicateKeys)
 	}
 	glog.V(5).Infof("Cache invalidation: node=%s,predicates=%v", nodeName, predicateKeys)
@@ -144,10 +135,9 @@ func (c *Cache) InvalidatePredicatesOnNode(nodeName string, predicateKeys sets.S
 
 // InvalidateAllPredicatesOnNode clears all cached results for one node.
 func (c *Cache) InvalidateAllPredicatesOnNode(nodeName string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if node, ok := c.nodeToCache[nodeName]; ok {
-		node.invalidate()
+	if v, ok := c.Load(nodeName); ok {
+		n := v.(*NodeCache)
+		n.invalidate()
 	}
 	glog.V(5).Infof("Cache invalidation: node=%s,predicates=*", nodeName)
 }
