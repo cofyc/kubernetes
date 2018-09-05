@@ -111,6 +111,25 @@ type genericScheduler struct {
 	percentageOfNodesToScore int32
 }
 
+// snapshot snapshots equivalane cache and node infos for all fit and priority
+// functions.
+func (g *genericScheduler) snapshot() error {
+	// IMPORTANT NOTE: We must snapshot equivalence cache before snapshotting
+	// scheduler cache, otherwise stale data may be written into equivalence
+	// cache, e.g.
+	// 1. snapshot cache
+	// 2. event arrives, updating cache and invalidating predicates or whole node cache
+	// 3. snapshot ecache
+	// 4. evaludate predicates
+	// 5. stale result will be written to ecache
+	if g.equivalenceCache != nil {
+		g.equivalenceCache.Snapshot()
+	}
+
+	// Used for all fit and priority funcs.
+	return g.cache.UpdateNodeNameToInfoMap(g.cachedNodeInfoMap)
+}
+
 // Schedule tries to schedule the given pod to one of the nodes in the node list.
 // If it succeeds, it will return the name of the node.
 // If it fails, it will return a FitError error with reasons.
@@ -130,20 +149,7 @@ func (g *genericScheduler) Schedule(pod *v1.Pod, nodeLister algorithm.NodeLister
 		return "", ErrNoNodesAvailable
 	}
 
-	// IMPORTANT NOTE: We must snapshot equivalence cache before snapshotting
-	// scheduler cache, otherwise stale data may be written into equivalence
-	// cache, e.g.
-	// 1. snapshot cache
-	// 2. event arrives, updating cache and invalidating predicates or whole node cache
-	// 3. snapshot ecache
-	// 4. evaludate predicates
-	// 5. stale result will be written to ecache
-	if g.equivalenceCache != nil {
-		g.equivalenceCache.Snapshot(nodes)
-	}
-
-	// Used for all fit and priority funcs.
-	err = g.cache.UpdateNodeNameToInfoMap(g.cachedNodeInfoMap)
+	err = g.snapshot()
 	if err != nil {
 		return "", err
 	}
@@ -239,7 +245,7 @@ func (g *genericScheduler) Preempt(pod *v1.Pod, nodeLister algorithm.NodeLister,
 	if !ok || fitError == nil {
 		return nil, nil, nil, nil
 	}
-	err := g.cache.UpdateNodeNameToInfoMap(g.cachedNodeInfoMap)
+	err := g.snapshot()
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -405,9 +411,7 @@ func (g *genericScheduler) findNodesThatFit(pod *v1.Pod, nodes []*v1.Node) ([]*v
 		}
 
 		checkNode := func(i int) {
-			var (
-				nodeCache *equivalence.NodeCache
-			)
+			var nodeCache *equivalence.NodeCache
 			nodeName := g.cache.NodeTree().Next()
 			if g.equivalenceCache != nil {
 				nodeCache, _ = g.equivalenceCache.GetNodeCache(nodeName)

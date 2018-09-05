@@ -89,14 +89,9 @@ func newNodeCache() *NodeCache {
 }
 
 // Snapshot snapshots current generations of cache.
-func (c *Cache) Snapshot(nodes []*v1.Node) {
+func (c *Cache) Snapshot() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for _, node := range nodes {
-		if _, exists := c.nodeToCache[node.Name]; !exists {
-			c.nodeToCache[node.Name] = newNodeCache()
-		}
-	}
 	for _, n := range c.nodeToCache {
 		// snapshot predicate generations
 		for k, v := range n.predicateGenerations {
@@ -301,6 +296,7 @@ func (n *NodeCache) updateResult(
 				equivalenceHash: predicateItem,
 			}
 	}
+	n.predicateGenerations[predicateKey]++
 
 	glog.V(5).Infof("Cache update: node=%s, predicate=%s,pod=%s,value=%v",
 		nodeInfo.Node().Name, predicateKey, podName, predicateItem)

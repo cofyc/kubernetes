@@ -225,7 +225,7 @@ func TestRunPredicate(t *testing.T) {
 
 			// Initialize and populate equivalence class cache.
 			ecache := NewCache()
-			ecache.Snapshot([]*v1.Node{testNode})
+			ecache.Snapshot()
 			nodeCache, _ := ecache.GetNodeCache(testNode.Name)
 
 			equivClass := NewClass(pod)
