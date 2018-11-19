@@ -516,6 +516,10 @@ func (c *configFactory) onPvUpdate(old, new interface{}) {
 	// parties, then scheduler will add pod back to unschedulable queue. We
 	// need to move pods to active queue on PV update for this scenario.
 	c.podQueue.MoveAllToActiveQueue()
+	// check pv cache in scheduler binder
+	newPV := new.(*v1.PersistentVolume)
+	cachedPV, _ := c.volumeBinder.Binder.GetPVAssumeCache().GetPV(newPV.Name)
+	klog.Infof("newPV ResourceVersion: %v, cachedPV: %v", newPV.ResourceVersion, cachedPV.ResourceVersion)
 }
 
 func (c *configFactory) invalidatePredicatesForPvUpdate(oldPV, newPV *v1.PersistentVolume) {

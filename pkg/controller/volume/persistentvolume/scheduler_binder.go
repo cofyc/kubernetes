@@ -94,6 +94,8 @@ type SchedulerVolumeBinder interface {
 
 	// GetBindingsCache returns the cache used (if any) to store volume binding decisions.
 	GetBindingsCache() PodBindingCache
+
+	GetPVAssumeCache() PVAssumeCache
 }
 
 type volumeBinder struct {
@@ -133,6 +135,10 @@ func NewVolumeBinder(
 	}
 
 	return b
+}
+
+func (b *volumeBinder) GetPVAssumeCache() PVAssumeCache {
+	return b.pvCache
 }
 
 func (b *volumeBinder) GetBindingsCache() PodBindingCache {
