@@ -1154,7 +1154,6 @@ func InitGcePdDriver(config testsuites.TestConfig) testsuites.TestDriver {
 				"ext2",
 				"ext3",
 				"ext4",
-				"xfs",
 			),
 			SupportedMountOption: sets.NewString("debug", "nouid32"),
 			Capabilities: map[testsuites.Capability]bool{
