@@ -125,13 +125,13 @@ func BeforeUpdate(strategy RESTUpdateStrategy, ctx context.Context, obj, old run
 		objectMeta.SetCreationTimestamp(oldMeta.GetCreationTimestamp())
 	}
 	// an update can never remove/change a deletion timestamp
-	if !oldMeta.GetDeletionTimestamp().IsZero() {
-		objectMeta.SetDeletionTimestamp(oldMeta.GetDeletionTimestamp())
-	}
-	// an update can never remove/change grace period seconds
-	if oldMeta.GetDeletionGracePeriodSeconds() != nil && objectMeta.GetDeletionGracePeriodSeconds() == nil {
-		objectMeta.SetDeletionGracePeriodSeconds(oldMeta.GetDeletionGracePeriodSeconds())
-	}
+	// if !oldMeta.GetDeletionTimestamp().IsZero() {
+	// objectMeta.SetDeletionTimestamp(oldMeta.GetDeletionTimestamp())
+	// }
+	// // an update can never remove/change grace period seconds
+	// if oldMeta.GetDeletionGracePeriodSeconds() != nil && objectMeta.GetDeletionGracePeriodSeconds() == nil {
+	// objectMeta.SetDeletionGracePeriodSeconds(oldMeta.GetDeletionGracePeriodSeconds())
+	// }
 
 	// Ensure some common fields, like UID, are validated for all resources.
 	errs, err := validateCommonFields(obj, old, strategy)
