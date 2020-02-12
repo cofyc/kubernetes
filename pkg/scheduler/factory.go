@@ -41,7 +41,6 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog"
 	schedulerv1alpha2 "k8s.io/kube-scheduler/config/v1alpha2"
-	"k8s.io/kubernetes/pkg/controller/volume/scheduling"
 	kubefeatures "k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/pkg/scheduler/algorithmprovider"
 	schedulerapi "k8s.io/kubernetes/pkg/scheduler/apis/config"
@@ -51,6 +50,7 @@ import (
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/defaultbinder"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/noderesources"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/queuesort"
+	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/volumebinding"
 	framework "k8s.io/kubernetes/pkg/scheduler/framework/v1alpha1"
 	internalcache "k8s.io/kubernetes/pkg/scheduler/internal/cache"
 	cachedebugger "k8s.io/kubernetes/pkg/scheduler/internal/cache/debugger"
@@ -83,9 +83,6 @@ type Configurator struct {
 	StopEverything <-chan struct{}
 
 	schedulerCache internalcache.Cache
-
-	// Handles volume binding decisions
-	volumeBinder scheduling.SchedulerVolumeBinder
 
 	// Disable pod preemption or not.
 	disablePreemption bool
@@ -123,7 +120,6 @@ func (c *Configurator) buildFramework(p schedulerapi.KubeSchedulerProfile) (fram
 		framework.WithInformerFactory(c.informerFactory),
 		framework.WithSnapshotSharedLister(c.nodeInfoSnapshot),
 		framework.WithRunAllFilters(c.alwaysCheckAllPredicates),
-		framework.WithVolumeBinder(c.volumeBinder),
 	)
 }
 
@@ -214,7 +210,6 @@ func (c *Configurator) create() (*Scheduler, error) {
 		NextPod:         internalqueue.MakeNextPodFunc(podQueue),
 		Error:           MakeDefaultErrorFunc(c.client, podQueue, c.schedulerCache),
 		StopEverything:  c.StopEverything,
-		VolumeBinder:    c.volumeBinder,
 		SchedulingQueue: podQueue,
 	}, nil
 }
@@ -228,11 +223,16 @@ func (c *Configurator) createFromProvider(providerName string) (*Scheduler, erro
 		return nil, fmt.Errorf("algorithm provider %q is not registered", providerName)
 	}
 
+	pluginConfig := []schedulerapi.PluginConfig{
+		c.volumeBindingPluginConfig(),
+	}
+
 	for i := range c.profiles {
 		prof := &c.profiles[i]
 		plugins := &schedulerapi.Plugins{}
 		plugins.Append(defaultPlugins)
 		plugins.Apply(prof.Plugins)
+		prof.PluginConfig = append(prof.PluginConfig, pluginConfig...)
 		prof.Plugins = plugins
 	}
 	return c.create()
@@ -293,6 +293,10 @@ func (c *Configurator) createFromConfig(policy schedulerapi.Policy) (*Scheduler,
 	}
 
 	klog.V(2).Infof("Creating scheduler with fit predicates '%v' and priority functions '%v'", predicateKeys, priorityKeys)
+
+	args.VolumeBindingArgs = &volumebinding.Args{
+		BindTimeoutSeconds: &c.bindTimeoutSeconds,
+	}
 
 	pluginsForPredicates, pluginConfigForPredicates, err := getPredicateConfigs(predicateKeys, lr, args)
 	if err != nil {
@@ -361,6 +365,15 @@ func mergePluginConfigsFromPolicy(pc1, pc2 []schedulerapi.PluginConfig) ([]sched
 		})
 	}
 	return pc, nil
+}
+
+func (c *Configurator) volumeBindingPluginConfig() schedulerapi.PluginConfig {
+	return schedulerapi.PluginConfig{
+		Name: volumebinding.Name,
+		Args: runtime.Unknown{
+			Raw: []byte(fmt.Sprintf(`{"bindTimeoutSeconds":%d}`, c.bindTimeoutSeconds)),
+		},
+	}
 }
 
 // getPriorityConfigs returns priorities configuration: ones that will run as priorities and ones that will run

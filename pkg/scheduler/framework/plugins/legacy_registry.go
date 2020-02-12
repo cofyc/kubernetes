@@ -174,6 +174,8 @@ type ConfigProducerArgs struct {
 	NodeResourcesFitArgs *schedulerv1alpha2.NodeResourcesFitArgs
 	// InterPodAffinityArgs is the args for InterPodAffinity plugin
 	InterPodAffinityArgs *schedulerv1alpha2.InterPodAffinityArgs
+	// VolumeBindingArgs is the args for VolumeBinding plugin
+	VolumeBindingArgs *volumebinding.Args
 }
 
 // ConfigProducer returns the set of plugins and their configuration for a
@@ -272,7 +274,12 @@ func NewLegacyRegistry() *LegacyRegistry {
 		})
 	registry.registerPredicateConfigProducer(CheckVolumeBindingPred,
 		func(args ConfigProducerArgs) (plugins config.Plugins, pluginConfig []config.PluginConfig) {
+			pluginConfig = append(pluginConfig, NewPluginConfig(volumebinding.Name, args.VolumeBindingArgs))
 			plugins.Filter = appendToPluginSet(plugins.Filter, volumebinding.Name, nil)
+			plugins.Reserve = appendToPluginSet(plugins.Reserve, volumebinding.Name, nil)
+			plugins.PreBind = appendToPluginSet(plugins.PreBind, volumebinding.Name, nil)
+			plugins.Unreserve = appendToPluginSet(plugins.Unreserve, volumebinding.Name, nil)
+			plugins.PostBind = appendToPluginSet(plugins.PostBind, volumebinding.Name, nil)
 			return
 		})
 	registry.registerPredicateConfigProducer(NoDiskConflictPred,
