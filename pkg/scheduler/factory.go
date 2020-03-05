@@ -50,7 +50,6 @@ import (
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/defaultbinder"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/noderesources"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/queuesort"
-	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/volumebinding"
 	framework "k8s.io/kubernetes/pkg/scheduler/framework/v1alpha1"
 	internalcache "k8s.io/kubernetes/pkg/scheduler/internal/cache"
 	cachedebugger "k8s.io/kubernetes/pkg/scheduler/internal/cache/debugger"
@@ -92,8 +91,6 @@ type Configurator struct {
 
 	// percentageOfNodesToScore specifies percentage of all nodes to score in each scheduling cycle.
 	percentageOfNodesToScore int32
-
-	bindTimeoutSeconds int64
 
 	podInitialBackoffSeconds int64
 
@@ -223,16 +220,11 @@ func (c *Configurator) createFromProvider(providerName string) (*Scheduler, erro
 		return nil, fmt.Errorf("algorithm provider %q is not registered", providerName)
 	}
 
-	pluginConfig := []schedulerapi.PluginConfig{
-		c.volumeBindingPluginConfig(),
-	}
-
 	for i := range c.profiles {
 		prof := &c.profiles[i]
 		plugins := &schedulerapi.Plugins{}
 		plugins.Append(defaultPlugins)
 		plugins.Apply(prof.Plugins)
-		prof.PluginConfig = append(prof.PluginConfig, pluginConfig...)
 		prof.Plugins = plugins
 	}
 	return c.create()
@@ -293,10 +285,6 @@ func (c *Configurator) createFromConfig(policy schedulerapi.Policy) (*Scheduler,
 	}
 
 	klog.V(2).Infof("Creating scheduler with fit predicates '%v' and priority functions '%v'", predicateKeys, priorityKeys)
-
-	args.VolumeBindingArgs = &volumebinding.Args{
-		BindTimeoutSeconds: &c.bindTimeoutSeconds,
-	}
 
 	pluginsForPredicates, pluginConfigForPredicates, err := getPredicateConfigs(predicateKeys, lr, args)
 	if err != nil {
@@ -365,15 +353,6 @@ func mergePluginConfigsFromPolicy(pc1, pc2 []schedulerapi.PluginConfig) ([]sched
 		})
 	}
 	return pc, nil
-}
-
-func (c *Configurator) volumeBindingPluginConfig() schedulerapi.PluginConfig {
-	return schedulerapi.PluginConfig{
-		Name: volumebinding.Name,
-		Args: runtime.Unknown{
-			Raw: []byte(fmt.Sprintf(`{"bindTimeoutSeconds":%d}`, c.bindTimeoutSeconds)),
-		},
-	}
 }
 
 // getPriorityConfigs returns priorities configuration: ones that will run as priorities and ones that will run

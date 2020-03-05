@@ -129,11 +129,6 @@ func SetDefaults_KubeSchedulerConfiguration(obj *v1alpha2.KubeSchedulerConfigura
 	// Use the default LeaderElectionConfiguration options
 	componentbaseconfigv1alpha1.RecommendedDefaultLeaderElectionConfiguration(&obj.LeaderElection.LeaderElectionConfiguration)
 
-	if obj.BindTimeoutSeconds == nil {
-		val := int64(600)
-		obj.BindTimeoutSeconds = &val
-	}
-
 	if obj.PodInitialBackoffSeconds == nil {
 		val := int64(1)
 		obj.PodInitialBackoffSeconds = &val

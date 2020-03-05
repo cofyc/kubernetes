@@ -134,7 +134,7 @@ func TestTaintBasedEvictions(t *testing.T) {
 			testCtx = testutils.InitTestScheduler(t, testCtx, true, nil)
 			defer testutils.CleanupTest(t, testCtx)
 			cs := testCtx.ClientSet
-			informers := testCtx.InformerFactory
+			informers := informers.NewSharedInformerFactory(cs, 0)
 			_, err := cs.CoreV1().Namespaces().Create(context.TODO(), testCtx.NS, metav1.CreateOptions{})
 			if err != nil {
 				t.Errorf("Failed to create namespace %+v", err)

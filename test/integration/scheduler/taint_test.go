@@ -79,7 +79,7 @@ func TestTaintNodeByCondition(t *testing.T) {
 	defer testutils.CleanupTest(t, testCtx)
 
 	cs := testCtx.ClientSet
-	informers := testCtx.InformerFactory
+	informers := informers.NewSharedInformerFactory(cs, 0)
 	nsName := testCtx.NS.Name
 
 	// Start NodeLifecycleController for taint.

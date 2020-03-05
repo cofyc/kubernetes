@@ -40,7 +40,6 @@ import (
 	"k8s.io/kubernetes/pkg/scheduler/apis/config/scheme"
 	"k8s.io/kubernetes/pkg/scheduler/core"
 	frameworkplugins "k8s.io/kubernetes/pkg/scheduler/framework/plugins"
-	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/volumebinding"
 	framework "k8s.io/kubernetes/pkg/scheduler/framework/v1alpha1"
 	internalcache "k8s.io/kubernetes/pkg/scheduler/internal/cache"
 	internalqueue "k8s.io/kubernetes/pkg/scheduler/internal/queue"
@@ -122,7 +121,6 @@ type schedulerOptions struct {
 	schedulerAlgorithmSource schedulerapi.SchedulerAlgorithmSource
 	disablePreemption        bool
 	percentageOfNodesToScore int32
-	bindTimeoutSeconds       int64
 	podInitialBackoffSeconds int64
 	podMaxBackoffSeconds     int64
 	// Contains out-of-tree plugins to be merged with the in-tree registry.
@@ -161,13 +159,6 @@ func WithPreemptionDisabled(disablePreemption bool) Option {
 func WithPercentageOfNodesToScore(percentageOfNodesToScore int32) Option {
 	return func(o *schedulerOptions) {
 		o.percentageOfNodesToScore = percentageOfNodesToScore
-	}
-}
-
-// WithBindTimeoutSeconds sets bindTimeoutSeconds for Scheduler, the default value is 100
-func WithBindTimeoutSeconds(bindTimeoutSeconds int64) Option {
-	return func(o *schedulerOptions) {
-		o.bindTimeoutSeconds = bindTimeoutSeconds
 	}
 }
 
@@ -220,7 +211,6 @@ var defaultSchedulerOptions = schedulerOptions{
 	},
 	disablePreemption:        false,
 	percentageOfNodesToScore: schedulerapi.DefaultPercentageOfNodesToScore,
-	bindTimeoutSeconds:       volumebinding.BindTimeoutSeconds,
 	podInitialBackoffSeconds: int64(internalqueue.DefaultPodInitialBackoffDuration.Seconds()),
 	podMaxBackoffSeconds:     int64(internalqueue.DefaultPodMaxBackoffDuration.Seconds()),
 }
@@ -261,7 +251,6 @@ func New(client clientset.Interface,
 		StopEverything:           stopEverything,
 		disablePreemption:        options.disablePreemption,
 		percentageOfNodesToScore: options.percentageOfNodesToScore,
-		bindTimeoutSeconds:       options.bindTimeoutSeconds,
 		podInitialBackoffSeconds: options.podInitialBackoffSeconds,
 		podMaxBackoffSeconds:     options.podMaxBackoffSeconds,
 		enableNonPreempting:      utilfeature.DefaultFeatureGate.Enabled(kubefeatures.NonPreemptingPriority),

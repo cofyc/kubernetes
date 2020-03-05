@@ -62,7 +62,6 @@ func TestSchedulerDefaults(t *testing.T) {
 				},
 				DisablePreemption:        pointer.BoolPtr(false),
 				PercentageOfNodesToScore: pointer.Int32Ptr(0),
-				BindTimeoutSeconds:       pointer.Int64Ptr(600),
 				PodInitialBackoffSeconds: pointer.Int64Ptr(1),
 				PodMaxBackoffSeconds:     pointer.Int64Ptr(10),
 				Profiles: []v1alpha2.KubeSchedulerProfile{
@@ -106,7 +105,6 @@ func TestSchedulerDefaults(t *testing.T) {
 				},
 				DisablePreemption:        pointer.BoolPtr(false),
 				PercentageOfNodesToScore: pointer.Int32Ptr(0),
-				BindTimeoutSeconds:       pointer.Int64Ptr(600),
 				PodInitialBackoffSeconds: pointer.Int64Ptr(1),
 				PodMaxBackoffSeconds:     pointer.Int64Ptr(10),
 				Profiles: []v1alpha2.KubeSchedulerProfile{
@@ -165,7 +163,6 @@ func TestSchedulerDefaults(t *testing.T) {
 				},
 				DisablePreemption:        pointer.BoolPtr(false),
 				PercentageOfNodesToScore: pointer.Int32Ptr(0),
-				BindTimeoutSeconds:       pointer.Int64Ptr(600),
 				PodInitialBackoffSeconds: pointer.Int64Ptr(1),
 				PodMaxBackoffSeconds:     pointer.Int64Ptr(10),
 				Profiles: []v1alpha2.KubeSchedulerProfile{
@@ -218,7 +215,6 @@ func TestSchedulerDefaults(t *testing.T) {
 				},
 				DisablePreemption:        pointer.BoolPtr(false),
 				PercentageOfNodesToScore: pointer.Int32Ptr(0),
-				BindTimeoutSeconds:       pointer.Int64Ptr(600),
 				PodInitialBackoffSeconds: pointer.Int64Ptr(1),
 				PodMaxBackoffSeconds:     pointer.Int64Ptr(10),
 				Profiles: []v1alpha2.KubeSchedulerProfile{
@@ -257,7 +253,6 @@ func TestSchedulerDefaults(t *testing.T) {
 				},
 				DisablePreemption:        pointer.BoolPtr(false),
 				PercentageOfNodesToScore: pointer.Int32Ptr(0),
-				BindTimeoutSeconds:       pointer.Int64Ptr(600),
 				PodInitialBackoffSeconds: pointer.Int64Ptr(1),
 				PodMaxBackoffSeconds:     pointer.Int64Ptr(10),
 				Profiles: []v1alpha2.KubeSchedulerProfile{

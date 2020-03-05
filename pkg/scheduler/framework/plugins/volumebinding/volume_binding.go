@@ -31,8 +31,8 @@ import (
 )
 
 const (
-	// BindTimeoutSeconds defines the default bind timeout
-	BindTimeoutSeconds = 100
+	// DefaultBindTimeoutSeconds defines the default bind timeout in seconds
+	DefaultBindTimeoutSeconds = 600
 
 	allBoundStateKey framework.StateKey = "volumebinding:all-bound"
 )
@@ -181,7 +181,7 @@ func New(plArgs runtime.Object, fh framework.FrameworkHandle) (framework.Plugin,
 	}
 	var bindTimeoutSeconds int64
 	if args.BindTimeoutSeconds == nil {
-		bindTimeoutSeconds = BindTimeoutSeconds
+		bindTimeoutSeconds = DefaultBindTimeoutSeconds
 	} else {
 		bindTimeoutSeconds = *args.BindTimeoutSeconds
 	}
