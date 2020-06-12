@@ -34,6 +34,7 @@ import (
 	coreinformers "k8s.io/client-go/informers/core/v1"
 	storageinformers "k8s.io/client-go/informers/storage/v1"
 	clientset "k8s.io/client-go/kubernetes"
+	corelisters "k8s.io/client-go/listers/core/v1"
 	storagelisters "k8s.io/client-go/listers/storage/v1"
 	csitrans "k8s.io/csi-translation-lib"
 	csiplugins "k8s.io/csi-translation-lib/plugins"
@@ -145,10 +146,10 @@ type volumeBinder struct {
 	kubeClient  clientset.Interface
 	classLister storagelisters.StorageClassLister
 
-	nodeInformer    coreinformers.NodeInformer
-	csiNodeInformer storageinformers.CSINodeInformer
-	pvcCache        PVCAssumeCache
-	pvCache         PVAssumeCache
+	nodeLister    corelisters.NodeLister
+	csiNodeLister storagelisters.CSINodeLister
+	pvcCache      PVCAssumeCache
+	pvCache       PVAssumeCache
 
 	// Stores binding decisions that were made in FindPodVolumes for use in AssumePodVolumes.
 	// AssumePodVolumes modifies the bindings again for use in BindPodVolumes.
@@ -173,8 +174,8 @@ func NewVolumeBinder(
 	b := &volumeBinder{
 		kubeClient:      kubeClient,
 		classLister:     storageClassInformer.Lister(),
-		nodeInformer:    nodeInformer,
-		csiNodeInformer: csiNodeInformer,
+		nodeLister:      nodeInformer.Lister(),
+		csiNodeLister:   csiNodeInformer.Lister(),
 		pvcCache:        NewPVCAssumeCache(pvcInformer.Informer()),
 		pvCache:         NewPVAssumeCache(pvInformer.Informer()),
 		podBindingCache: NewPodBindingCache(),
@@ -509,12 +510,12 @@ func (b *volumeBinder) checkBindings(pod *v1.Pod, bindings []*bindingInfo, claim
 		return false, fmt.Errorf("failed to get cached claims to provision for pod %q", podName)
 	}
 
-	node, err := b.nodeInformer.Lister().Get(pod.Spec.NodeName)
+	node, err := b.nodeLister.Get(pod.Spec.NodeName)
 	if err != nil {
 		return false, fmt.Errorf("failed to get node %q: %v", pod.Spec.NodeName, err)
 	}
 
-	csiNode, err := b.csiNodeInformer.Lister().Get(node.Name)
+	csiNode, err := b.csiNodeLister.Get(node.Name)
 	if err != nil {
 		// TODO: return the error once CSINode is created by default
 		klog.V(4).Infof("Could not get a CSINode object for the node %q: %v", node.Name, err)
@@ -715,7 +716,7 @@ func (b *volumeBinder) GetPodVolumes(pod *v1.Pod) (boundClaims []*v1.PersistentV
 }
 
 func (b *volumeBinder) checkBoundClaims(claims []*v1.PersistentVolumeClaim, node *v1.Node, podName string) (bool, error) {
-	csiNode, err := b.csiNodeInformer.Lister().Get(node.Name)
+	csiNode, err := b.csiNodeLister.Get(node.Name)
 	if err != nil {
 		// TODO: return the error once CSINode is created by default
 		klog.V(4).Infof("Could not get a CSINode object for the node %q: %v", node.Name, err)

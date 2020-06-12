@@ -16,7 +16,7 @@ limitations under the License.
 
 package scheduling
 
-import "k8s.io/api/core/v1"
+import v1 "k8s.io/api/core/v1"
 
 // FakeVolumeBinderConfig holds configurations for fake volume binder.
 type FakeVolumeBinderConfig struct {

@@ -26,6 +26,7 @@ import (
 	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -34,6 +35,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/api/events/v1beta1"
+	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -47,7 +49,6 @@ import (
 	clienttesting "k8s.io/client-go/testing"
 	clientcache "k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/events"
-	"k8s.io/kubernetes/pkg/controller/volume/scheduling"
 	schedulerapi "k8s.io/kubernetes/pkg/scheduler/apis/config"
 	"k8s.io/kubernetes/pkg/scheduler/core"
 	"k8s.io/kubernetes/pkg/scheduler/framework/plugins/defaultbinder"
@@ -61,6 +62,7 @@ import (
 	internalqueue "k8s.io/kubernetes/pkg/scheduler/internal/queue"
 	"k8s.io/kubernetes/pkg/scheduler/profile"
 	st "k8s.io/kubernetes/pkg/scheduler/testing"
+	"k8s.io/utils/pointer"
 )
 
 type fakePodPreemptor struct{}
@@ -532,7 +534,7 @@ func TestSchedulerNoPhantomPodAfterExpire(t *testing.T) {
 		st.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
 		st.RegisterPluginAsExtensions(nodeports.Name, nodeports.New, "Filter", "PreFilter"),
 	}
-	scheduler, bindingChan, errChan := setupTestSchedulerWithOnePodOnNode(t, queuedPodStore, scache, informerFactory, stop, pod, &node, fns...)
+	scheduler, bindingChan, errChan := setupTestSchedulerWithOnePodOnNode(client, t, queuedPodStore, scache, informerFactory, stop, pod, &node, fns...)
 
 	waitPodExpireChan := make(chan struct{})
 	timeout := make(chan struct{})
@@ -598,7 +600,7 @@ func TestSchedulerNoPhantomPodAfterDelete(t *testing.T) {
 		st.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
 		st.RegisterPluginAsExtensions(nodeports.Name, nodeports.New, "Filter", "PreFilter"),
 	}
-	scheduler, bindingChan, errChan := setupTestSchedulerWithOnePodOnNode(t, queuedPodStore, scache, informerFactory, stop, firstPod, &node, fns...)
+	scheduler, bindingChan, errChan := setupTestSchedulerWithOnePodOnNode(client, t, queuedPodStore, scache, informerFactory, stop, firstPod, &node, fns...)
 
 	// We use conflicted pod ports to incur fit predicate failure.
 	secondPod := podWithPort("bar", "", 8080)
@@ -656,10 +658,10 @@ func TestSchedulerNoPhantomPodAfterDelete(t *testing.T) {
 
 // queuedPodStore: pods queued before processing.
 // cache: scheduler cache that might contain assumed pods.
-func setupTestSchedulerWithOnePodOnNode(t *testing.T, queuedPodStore *clientcache.FIFO, scache internalcache.Cache,
+func setupTestSchedulerWithOnePodOnNode(client *clientsetfake.Clientset, t *testing.T, queuedPodStore *clientcache.FIFO, scache internalcache.Cache,
 	informerFactory informers.SharedInformerFactory, stop chan struct{}, pod *v1.Pod, node *v1.Node, fns ...st.RegisterPluginFunc) (*Scheduler, chan *v1.Binding, chan error) {
 
-	scheduler, bindingChan, errChan := setupTestScheduler(queuedPodStore, scache, informerFactory, nil, fns...)
+	scheduler, bindingChan, errChan := setupTestScheduler(client, queuedPodStore, scache, informerFactory, nil, fns...)
 
 	informerFactory.Start(stop)
 	informerFactory.WaitForCacheSync(stop)
@@ -744,7 +746,7 @@ func TestSchedulerFailedSchedulingReasons(t *testing.T) {
 		st.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
 		st.RegisterPluginAsExtensions(noderesources.FitName, noderesources.NewFit, "Filter", "PreFilter"),
 	}
-	scheduler, _, errChan := setupTestScheduler(queuedPodStore, scache, informerFactory, nil, fns...)
+	scheduler, _, errChan := setupTestScheduler(client, queuedPodStore, scache, informerFactory, nil, fns...)
 
 	informerFactory.Start(stop)
 	informerFactory.WaitForCacheSync(stop)
@@ -771,19 +773,17 @@ func TestSchedulerFailedSchedulingReasons(t *testing.T) {
 
 // queuedPodStore: pods queued before processing.
 // scache: scheduler cache that might contain assumed pods.
-func setupTestScheduler(queuedPodStore *clientcache.FIFO, scache internalcache.Cache, informerFactory informers.SharedInformerFactory, broadcaster events.EventBroadcaster, fns ...st.RegisterPluginFunc) (*Scheduler, chan *v1.Binding, chan error) {
+func setupTestScheduler(client *clientsetfake.Clientset, queuedPodStore *clientcache.FIFO, scache internalcache.Cache, informerFactory informers.SharedInformerFactory, broadcaster events.EventBroadcaster, fns ...st.RegisterPluginFunc) (*Scheduler, chan *v1.Binding, chan error) {
 	bindingChan := make(chan *v1.Binding, 1)
-	client := clientsetfake.NewSimpleClientset()
 	client.PrependReactor("create", "pods", func(action clienttesting.Action) (bool, runtime.Object, error) {
-		var b *v1.Binding
 		if action.GetSubresource() == "binding" {
 			b := action.(clienttesting.CreateAction).GetObject().(*v1.Binding)
 			bindingChan <- b
 		}
-		return true, b, nil
+		return false, nil, nil
 	})
 
-	fwk, _ := st.NewFramework(fns, framework.WithClientSet(client))
+	fwk, _ := st.NewFramework(fns, framework.WithClientSet(client), framework.WithInformerFactory(informerFactory))
 	prof := &profile.Profile{
 		Framework: fwk,
 		Recorder:  &events.FakeRecorder{},
@@ -791,6 +791,7 @@ func setupTestScheduler(queuedPodStore *clientcache.FIFO, scache internalcache.C
 	if broadcaster != nil {
 		prof.Recorder = broadcaster.NewRecorder(scheme.Scheme, testSchedulerName)
 	}
+
 	profiles := profile.Map{
 		testSchedulerName: prof,
 	}
@@ -824,31 +825,18 @@ func setupTestScheduler(queuedPodStore *clientcache.FIFO, scache internalcache.C
 	return sched, bindingChan, errChan
 }
 
-func setupTestSchedulerWithVolumeBinding(volumeBinder scheduling.SchedulerVolumeBinder, stop <-chan struct{}, broadcaster events.EventBroadcaster) (*Scheduler, chan *v1.Binding, chan error) {
-	testNode := v1.Node{ObjectMeta: metav1.ObjectMeta{Name: "machine1", UID: types.UID("machine1")}}
+func setupTestSchedulerWithVolumeBinding(ctx context.Context, client *clientsetfake.Clientset, informerFactory informers.SharedInformerFactory, broadcaster events.EventBroadcaster) (*Scheduler, clientcache.Queue, internalcache.Cache, chan *v1.Binding, chan error) {
 	queuedPodStore := clientcache.NewFIFO(clientcache.MetaNamespaceKeyFunc)
-	pod := podWithID("foo", "")
-	pod.Namespace = "foo-ns"
-	pod.Spec.Volumes = append(pod.Spec.Volumes, v1.Volume{Name: "testVol",
-		VolumeSource: v1.VolumeSource{PersistentVolumeClaim: &v1.PersistentVolumeClaimVolumeSource{ClaimName: "testPVC"}}})
-	queuedPodStore.Add(pod)
-	scache := internalcache.New(10*time.Minute, stop)
-	scache.AddNode(&testNode)
-	testPVC := v1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "testPVC", Namespace: pod.Namespace, UID: types.UID("testPVC")}}
-	client := clientsetfake.NewSimpleClientset(&testNode, &testPVC)
-	informerFactory := informers.NewSharedInformerFactory(client, 0)
-
+	scache := internalcache.New(10*time.Minute, ctx.Done())
 	fns := []st.RegisterPluginFunc{
 		st.RegisterQueueSortPlugin(queuesort.Name, queuesort.New),
 		st.RegisterBindPlugin(defaultbinder.Name, defaultbinder.New),
 		st.RegisterPluginAsExtensions(volumebinding.Name, func(plArgs runtime.Object, handle framework.FrameworkHandle) (framework.Plugin, error) {
-			return &volumebinding.VolumeBinding{Binder: volumeBinder}, nil
+			return volumebinding.New(plArgs, handle)
 		}, "PreFilter", "Filter", "Reserve", "Unreserve", "PreBind", "PostBind"),
 	}
-	s, bindingChan, errChan := setupTestScheduler(queuedPodStore, scache, informerFactory, broadcaster, fns...)
-	informerFactory.Start(stop)
-	informerFactory.WaitForCacheSync(stop)
-	return s, bindingChan, errChan
+	s, bindingChan, errChan := setupTestScheduler(client, queuedPodStore, scache, informerFactory, broadcaster, fns...)
+	return s, queuedPodStore, scache, bindingChan, errChan
 }
 
 // This is a workaround because golint complains that errors cannot
@@ -859,102 +847,224 @@ func makePredicateError(failReason string) error {
 	return fmt.Errorf(s)
 }
 
+// TestSchedulerWithVolumeBinding tests scheduler's behavior with VolumeBinding plugin enabled.
 func TestSchedulerWithVolumeBinding(t *testing.T) {
-	findErr := fmt.Errorf("find err")
-	assumeErr := fmt.Errorf("assume err")
-	bindErr := fmt.Errorf("bind err")
-	client := clientsetfake.NewSimpleClientset()
+	var (
+		immediate            = storagev1.VolumeBindingImmediate
+		waitForFirstConsumer = storagev1.VolumeBindingWaitForFirstConsumer
+		immediateSC          = &storagev1.StorageClass{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "immediate-sc",
+			},
+			VolumeBindingMode: &immediate,
+		}
+		waitSC = &storagev1.StorageClass{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "wait-sc",
+			},
+			VolumeBindingMode: &waitForFirstConsumer,
+		}
+	)
 
-	eventBroadcaster := events.NewBroadcaster(&events.EventSinkImpl{Interface: client.EventsV1beta1().Events("")})
+	makePVC := func(name string, boundPVName string, storageClassName string) *v1.PersistentVolumeClaim {
+		pvc := &v1.PersistentVolumeClaim{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:            name,
+				Namespace:       "foo-ns",
+				ResourceVersion: "1",
+			},
+			Spec: v1.PersistentVolumeClaimSpec{
+				StorageClassName: pointer.StringPtr(storageClassName),
+			},
+		}
+		if boundPVName != "" {
+			pvc.Spec.VolumeName = boundPVName
+			metav1.SetMetaDataAnnotation(&pvc.ObjectMeta, "pv.kubernetes.io/bind-completed", "true")
+		}
+		return pvc
+	}
+
+	makePV := func(name string, storageClassName string) *v1.PersistentVolume {
+		return &v1.PersistentVolume{
+			ObjectMeta: metav1.ObjectMeta{
+				ResourceVersion: "1",
+				Name:            name,
+			},
+			Spec: v1.PersistentVolumeSpec{
+				Capacity: v1.ResourceList{
+					v1.ResourceStorage: resource.MustParse("1Gi"),
+				},
+				StorageClassName: storageClassName,
+			},
+			Status: v1.PersistentVolumeStatus{
+				Phase: v1.VolumeAvailable,
+			},
+		}
+	}
+
+	addPVNodeAffinity := func(pv *v1.PersistentVolume, key string, values []string) *v1.PersistentVolume {
+		pv.Spec.NodeAffinity = &v1.VolumeNodeAffinity{
+			Required: &v1.NodeSelector{
+				NodeSelectorTerms: []v1.NodeSelectorTerm{
+					{
+						MatchExpressions: []v1.NodeSelectorRequirement{
+							{
+								Key:      key,
+								Operator: v1.NodeSelectorOpIn,
+								Values:   values,
+							},
+						},
+					},
+				},
+			},
+		}
+		return pv
+	}
+
+	testNode := &v1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "machine1",
+			Labels: map[string]string{
+				v1.LabelHostname: "machine1",
+			},
+		},
+	}
 
 	// This can be small because we wait for pod to finish scheduling first
 	chanTimeout := 2 * time.Second
 
 	table := []struct {
-		name               string
-		expectError        error
-		expectPodBind      *v1.Binding
-		expectAssumeCalled bool
-		expectBindCalled   bool
-		eventReason        string
-		volumeBinderConfig *scheduling.FakeVolumeBinderConfig
+		name          string
+		pvcs          []*v1.PersistentVolumeClaim
+		pvs           []*v1.PersistentVolume
+		expectError   error
+		expectPodBind *v1.Binding
+		eventReason   string
 	}{
 		{
 			name: "all bound",
-			volumeBinderConfig: &scheduling.FakeVolumeBinderConfig{
-				AllBound: true,
+			pvcs: []*v1.PersistentVolumeClaim{
+				makePVC("pvc-a", "pv-a", waitSC.Name),
+				makePVC("pvc-b", "pv-b", immediateSC.Name),
 			},
-			expectAssumeCalled: true,
-			expectPodBind:      &v1.Binding{ObjectMeta: metav1.ObjectMeta{Name: "foo", Namespace: "foo-ns", UID: types.UID("foo")}, Target: v1.ObjectReference{Kind: "Node", Name: "machine1"}},
-			eventReason:        "Scheduled",
+			pvs: []*v1.PersistentVolume{
+				makePV("pv-a", waitSC.Name),
+				makePV("pv-b", immediateSC.Name),
+			},
+			expectPodBind: &v1.Binding{ObjectMeta: metav1.ObjectMeta{Name: "foo", Namespace: "foo-ns", UID: types.UID("foo")}, Target: v1.ObjectReference{Kind: "Node", Name: "machine1"}},
+			eventReason:   "Scheduled",
 		},
 		{
 			name: "bound/invalid pv affinity",
-			volumeBinderConfig: &scheduling.FakeVolumeBinderConfig{
-				AllBound:    true,
-				FindReasons: scheduling.ConflictReasons{scheduling.ErrReasonNodeConflict},
+			pvcs: []*v1.PersistentVolumeClaim{
+				makePVC("pvc-a", "pv-a", waitSC.Name),
+			},
+			pvs: []*v1.PersistentVolume{
+				addPVNodeAffinity(makePV("pv-a", waitSC.Name), v1.LabelHostname, []string{"machine2"}),
 			},
 			eventReason: "FailedScheduling",
 			expectError: makePredicateError("1 node(s) had volume node affinity conflict"),
 		},
 		{
 			name: "unbound/no matches",
-			volumeBinderConfig: &scheduling.FakeVolumeBinderConfig{
-				FindReasons: scheduling.ConflictReasons{scheduling.ErrReasonBindConflict},
+			pvcs: []*v1.PersistentVolumeClaim{
+				makePVC("pvc-a", "", waitSC.Name),
+			},
+			pvs: []*v1.PersistentVolume{
+				addPVNodeAffinity(makePV("pv-a", waitSC.Name), v1.LabelHostname, []string{"machine2"}),
 			},
 			eventReason: "FailedScheduling",
 			expectError: makePredicateError("1 node(s) didn't find available persistent volumes to bind"),
 		},
 		{
 			name: "bound and unbound unsatisfied",
-			volumeBinderConfig: &scheduling.FakeVolumeBinderConfig{
-				FindReasons: scheduling.ConflictReasons{scheduling.ErrReasonBindConflict, scheduling.ErrReasonNodeConflict},
+			pvcs: []*v1.PersistentVolumeClaim{
+				makePVC("pvc-a", "pv-a", immediateSC.Name),
+				makePVC("pvc-b", "", waitSC.Name),
+			},
+			pvs: []*v1.PersistentVolume{
+				addPVNodeAffinity(makePV("pv-a", immediateSC.Name), v1.LabelHostname, []string{"machine2"}),
+				addPVNodeAffinity(makePV("pv-b", waitSC.Name), v1.LabelHostname, []string{"machine2"}),
 			},
 			eventReason: "FailedScheduling",
 			expectError: makePredicateError("1 node(s) didn't find available persistent volumes to bind, 1 node(s) had volume node affinity conflict"),
 		},
 		{
-			name:               "unbound/found matches/bind succeeds",
-			volumeBinderConfig: &scheduling.FakeVolumeBinderConfig{},
-			expectAssumeCalled: true,
-			expectBindCalled:   true,
-			expectPodBind:      &v1.Binding{ObjectMeta: metav1.ObjectMeta{Name: "foo", Namespace: "foo-ns", UID: types.UID("foo")}, Target: v1.ObjectReference{Kind: "Node", Name: "machine1"}},
-			eventReason:        "Scheduled",
-		},
-		{
-			name: "predicate error",
-			volumeBinderConfig: &scheduling.FakeVolumeBinderConfig{
-				FindErr: findErr,
+			name: "unbound/found matches/bind succeeds",
+			pvcs: []*v1.PersistentVolumeClaim{
+				makePVC("pvc-a", "", waitSC.Name),
 			},
-			eventReason: "FailedScheduling",
-			expectError: fmt.Errorf("running %q filter plugin for pod %q: %v", volumebinding.Name, "foo", findErr),
-		},
-		{
-			name: "assume error",
-			volumeBinderConfig: &scheduling.FakeVolumeBinderConfig{
-				AssumeErr: assumeErr,
+			pvs: []*v1.PersistentVolume{
+				addPVNodeAffinity(makePV("pv-a", waitSC.Name), v1.LabelHostname, []string{"machine1"}),
 			},
-			expectAssumeCalled: true,
-			eventReason:        "FailedScheduling",
-			expectError:        fmt.Errorf("error while running %q reserve plugin for pod %q: %v", volumebinding.Name, "foo", assumeErr),
-		},
-		{
-			name: "bind error",
-			volumeBinderConfig: &scheduling.FakeVolumeBinderConfig{
-				BindErr: bindErr,
-			},
-			expectAssumeCalled: true,
-			expectBindCalled:   true,
-			eventReason:        "FailedScheduling",
-			expectError:        fmt.Errorf("error while running %q prebind plugin for pod %q: %v", volumebinding.Name, "foo", bindErr),
+			expectPodBind: &v1.Binding{ObjectMeta: metav1.ObjectMeta{Name: "foo", Namespace: "foo-ns", UID: types.UID("foo")}, Target: v1.ObjectReference{Kind: "Node", Name: "machine1"}},
+			eventReason:   "Scheduled",
 		},
 	}
 
 	for _, item := range table {
 		t.Run(item.name, func(t *testing.T) {
-			stop := make(chan struct{})
-			fakeVolumeBinder := scheduling.NewFakeVolumeBinder(item.volumeBinderConfig)
-			s, bindingChan, errChan := setupTestSchedulerWithVolumeBinding(fakeVolumeBinder, stop, eventBroadcaster)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			client := clientsetfake.NewSimpleClientset()
+			client.PrependReactor("update", "persistentvolumes", func(action clienttesting.Action) (bool, runtime.Object, error) {
+				object := action.(clienttesting.CreateAction).GetObject().(metav1.Object)
+				v, _ := strconv.Atoi(object.GetResourceVersion())
+				object.SetResourceVersion(strconv.Itoa(v + 1))
+				return true, object.(runtime.Object), nil
+			})
+			client.PrependReactor("update", "persistentvolumeclaims", func(action clienttesting.Action) (bool, runtime.Object, error) {
+				object := action.(clienttesting.CreateAction).GetObject().(metav1.Object)
+				v, _ := strconv.Atoi(object.GetResourceVersion())
+				object.SetResourceVersion(strconv.Itoa(v + 1))
+				return true, object.(runtime.Object), nil
+			})
+			informerFactory := informers.NewSharedInformerFactory(client, 0)
+			eventBroadcaster := events.NewBroadcaster(&events.EventSinkImpl{Interface: client.EventsV1beta1().Events("")})
+
+			s, queue, scache, bindingChan, errChan := setupTestSchedulerWithVolumeBinding(ctx, client, informerFactory, eventBroadcaster)
+			// mock builtin event listeners's behavior
+			client.PrependReactor("create", "pods", func(action clienttesting.Action) (bool, runtime.Object, error) {
+				if action.GetSubresource() == "binding" {
+					return false, nil, nil
+				}
+				pod := action.(clienttesting.CreateAction).GetObject().(*v1.Pod)
+				queue.Add(pod)
+				return false, nil, nil
+			})
+			client.PrependReactor("create", "nodes", func(action clienttesting.Action) (bool, runtime.Object, error) {
+				node := action.(clienttesting.CreateAction).GetObject().(*v1.Node)
+				scache.AddNode(node)
+				return false, nil, nil
+			})
+
+			// Start informer factory after initialization
+			informerFactory.Start(ctx.Done())
+
+			// Feed testing data and wait for them to be synced
+			client.CoreV1().Nodes().Create(ctx, testNode, metav1.CreateOptions{})
+			client.StorageV1().StorageClasses().Create(ctx, immediateSC, metav1.CreateOptions{})
+			client.StorageV1().StorageClasses().Create(ctx, waitSC, metav1.CreateOptions{})
+			pod := podWithID("foo", "")
+			pod.Namespace = "foo-ns"
+			for _, pvc := range item.pvcs {
+				pod.Spec.Volumes = append(pod.Spec.Volumes, v1.Volume{Name: pvc.Name,
+					VolumeSource: v1.VolumeSource{
+						PersistentVolumeClaim: &v1.PersistentVolumeClaimVolumeSource{
+							ClaimName: pvc.Name,
+						},
+					},
+				})
+				client.CoreV1().PersistentVolumeClaims(pvc.Namespace).Create(ctx, pvc, metav1.CreateOptions{})
+			}
+			client.CoreV1().Pods(pod.Namespace).Create(ctx, pod, metav1.CreateOptions{})
+			for _, pv := range item.pvs {
+				client.CoreV1().PersistentVolumes().Create(ctx, pv, metav1.CreateOptions{})
+			}
+			informerFactory.WaitForCacheSync(ctx.Done())
+
+			// Start event watcher
 			eventChan := make(chan struct{})
 			stopFunc := eventBroadcaster.StartEventWatcher(func(obj runtime.Object) {
 				e, _ := obj.(*v1beta1.Event)
@@ -963,14 +1073,18 @@ func TestSchedulerWithVolumeBinding(t *testing.T) {
 				}
 				close(eventChan)
 			})
+			defer stopFunc()
+
+			// Schedule
 			s.scheduleOne(context.Background())
+
 			// Wait for pod to succeed or fail scheduling
 			select {
 			case <-eventChan:
 			case <-time.After(wait.ForeverTestTimeout):
 				t.Fatalf("scheduling timeout after %v", wait.ForeverTestTimeout)
 			}
-			stopFunc()
+
 			// Wait for scheduling to return an error
 			select {
 			case err := <-errChan:
@@ -994,16 +1108,6 @@ func TestSchedulerWithVolumeBinding(t *testing.T) {
 					t.Errorf("did not receive pod binding after %v", chanTimeout)
 				}
 			}
-
-			if item.expectAssumeCalled != fakeVolumeBinder.AssumeCalled {
-				t.Errorf("expectedAssumeCall %v", item.expectAssumeCalled)
-			}
-
-			if item.expectBindCalled != fakeVolumeBinder.BindCalled {
-				t.Errorf("expectedBindCall %v", item.expectBindCalled)
-			}
-
-			close(stop)
 		})
 	}
 }
@@ -1381,6 +1485,7 @@ func TestUpdatePod(t *testing.T) {
 			expectedPatchDataPattern: `{"status":{"nominatedNodeName":"node1"}}`,
 		},
 	}
+
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			actualPatchRequests := 0

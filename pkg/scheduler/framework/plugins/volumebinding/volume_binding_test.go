@@ -228,7 +228,8 @@ func TestVolumeBinding(t *testing.T) {
 
 	for _, item := range table {
 		t.Run(item.name, func(t *testing.T) {
-			ctx := context.Background()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
 			client := fake.NewSimpleClientset()
 			informerFactory := informers.NewSharedInformerFactory(client, 0)
 			opts := []framework.Option{
@@ -255,15 +256,11 @@ func TestVolumeBinding(t *testing.T) {
 			if item.node != nil {
 				client.CoreV1().Nodes().Create(ctx, item.node, metav1.CreateOptions{})
 			}
-			if len(item.pvcs) > 0 {
-				for _, pvc := range item.pvcs {
-					client.CoreV1().PersistentVolumeClaims(pvc.Namespace).Create(ctx, pvc, metav1.CreateOptions{})
-				}
+			for _, pvc := range item.pvcs {
+				client.CoreV1().PersistentVolumeClaims(pvc.Namespace).Create(ctx, pvc, metav1.CreateOptions{})
 			}
-			if len(item.pvs) > 0 {
-				for _, pv := range item.pvs {
-					client.CoreV1().PersistentVolumes().Create(ctx, pv, metav1.CreateOptions{})
-				}
+			for _, pv := range item.pvs {
+				client.CoreV1().PersistentVolumes().Create(ctx, pv, metav1.CreateOptions{})
 			}
 			caches := informerFactory.WaitForCacheSync(ctx.Done())
 			for _, synced := range caches {
